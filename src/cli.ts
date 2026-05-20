@@ -81,13 +81,17 @@ async function main(): Promise<void> {
     .command('lint [service]')
     .description('Validate config + openapi syntax. Offline.')
     .option('--config <path>', 'config path')
-    .action(async (service: string | undefined, opts: { config?: string }) => {
-      const code = await runLint({
-        service,
-        configPath: requireConfigPath(opts.config),
-      });
-      process.exit(code);
-    });
+    .option('--strict', 'fail on OpenAPI spec validation warnings (default: warn-only)')
+    .action(
+      async (service: string | undefined, opts: { config?: string; strict?: boolean }) => {
+        const code = await runLint({
+          service,
+          configPath: requireConfigPath(opts.config),
+          strict: opts.strict,
+        });
+        process.exit(code);
+      },
+    );
 
   program
     .command('render <service>')
