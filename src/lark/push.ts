@@ -11,7 +11,11 @@ export type PushFailureReason =
 
 export interface PushInput {
   docToken: string;
+  /** Path passed to lark-cli's --markdown @<path>. lark-cli requires this to be
+   *  relative to `cwd`. Caller is responsible for using a relative path. */
   mdPath: string;
+  /** Working directory for the lark-cli subprocess. Defaults to process.cwd(). */
+  cwd?: string;
   larkBin?: string;
   timeoutMs: number;
   /** Pass-through for testing — override process.env */
@@ -83,6 +87,7 @@ export function push(input: PushInput): PushResult {
   const spawnOpts = {
     encoding: 'utf8' as const,
     env: input.env ?? process.env,
+    cwd: input.cwd,
     timeout: input.timeoutMs,
     maxBuffer: 64 * 1024 * 1024, // 64MB stdout — needed for very large rendered docs
   };

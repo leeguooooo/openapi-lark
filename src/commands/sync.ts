@@ -97,27 +97,27 @@ export async function runSync(args: SyncArgs): Promise<number> {
               `[sync] ${svc.name}: heading jump H${w.from} → H${w.to} at line ${w.line} ("${w.text}") — see KNOWN_ISSUES #5\n`,
             );
           }
-          const outPath = resolve(
-            loaded.basedir,
-            '.openapi-lark',
-            `${svc.name}.md`,
-          );
-          mkdirSync(resolve(loaded.basedir, '.openapi-lark'), { recursive: true });
-          writeFileSync(outPath, result.markdown, 'utf8');
+          const outDir = resolve(loaded.basedir, '.openapi-lark');
+          mkdirSync(outDir, { recursive: true });
+          const absOutPath = resolve(outDir, `${svc.name}.md`);
+          // Path passed to lark-cli: relative to basedir (lark-cli rejects absolute)
+          const relOutPath = `.openapi-lark/${svc.name}.md`;
+          writeFileSync(absOutPath, result.markdown, 'utf8');
 
           if (args.dryRun) {
             results[idx] = {
               service: svc.name,
               status: 'ok',
               durationMs: Date.now() - started,
-              reason: `dry-run; wrote ${outPath}`,
+              reason: `dry-run; wrote ${absOutPath}`,
             };
             return;
           }
 
           const pushed = push({
             docToken: svc.docToken,
-            mdPath: outPath,
+            mdPath: relOutPath,
+            cwd: loaded.basedir,
             larkBin: loaded.config.larkBin,
             timeoutMs,
           });
