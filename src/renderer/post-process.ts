@@ -53,11 +53,16 @@ function escapeContentPipes(line: string, separatorPipePositions: number[]): str
   const sepInner = separatorPipePositions.slice(1, -1);
   const lineInnerIdx = linePipes.slice(1, -1); // positions in line
   // Each inner separator pipe claims the closest unclaimed body inner pipe.
+  // Walk separator pipes RIGHT-TO-LEFT (codex round-6 Q2): pipes closer to the
+  // right are more likely real delimiters; pipes closer to a cell's left edge
+  // are more likely content. Right-to-left claim pushes content pipes to the
+  // leftmost unmatched slot, which matches human authoring intuition.
   const claimed = new Set<number>();
-  for (const sepPos of sepInner) {
+  for (let s = sepInner.length - 1; s >= 0; s--) {
+    const sepPos = sepInner[s];
     let bestIdx = -1;
     let bestDist = Infinity;
-    for (let i = 0; i < lineInnerIdx.length; i++) {
+    for (let i = lineInnerIdx.length - 1; i >= 0; i--) {
       if (claimed.has(i)) continue;
       const dist = Math.abs(lineInnerIdx[i] - sepPos);
       if (dist < bestDist) {

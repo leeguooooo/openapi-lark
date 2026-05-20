@@ -31,14 +31,15 @@ describe('extractDocToken', () => {
     expect(extractDocToken('https://feishu.cn/docx/abc')).toBeNull();
   });
 
-  it('falls back to last segment for unknown markers on trusted host', () => {
+  it('extracts from known marker (minutes) when shape valid', () => {
     expect(extractDocToken('https://feishu.cn/minutes/mtABCDEFGH123')).toBe(
       'mtABCDEFGH123',
     );
   });
 
-  it('rejects fallback when last segment fails shape check', () => {
-    expect(extractDocToken('https://feishu.cn/random/!@#$')).toBeNull();
+  it('returns null for admin/share paths (no marker matched)', () => {
+    // codex round-6 Q3: paths like /spaces/manage/<UUID> must NOT be silently accepted
+    expect(extractDocToken('https://feishu.cn/spaces/manage/AbcDef12345678')).toBeNull();
   });
 
   it('returns null for single-segment path', () => {

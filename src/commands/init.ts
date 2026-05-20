@@ -25,9 +25,10 @@ function looksLikeDocToken(s: string): boolean {
  * Supported markers (broaden as feishu adds product types):
  *   docx / docs / wiki / sheets / base / minutes / mindnote / okr
  *
- * If no known marker matches but the URL is on a trusted host AND the last path
- * segment passes shape validation, fall back to it (best effort; logged at caller
- * so user can correct).
+ * Marker matching only — no fallback. Rationale (codex round-6 Q3): paths like
+ * `feishu.cn/spaces/manage/<UUID>` would otherwise leak admin/share IDs into
+ * the config as if they were docTokens. Users who hit an unrecognised marker
+ * should manually paste the docToken and file an issue to expand the marker list.
  *
  * Trailing query/fragment is stripped.
  */
@@ -41,7 +42,6 @@ export function extractDocToken(url: string): string | null {
       host.endsWith('larkoffice.com');
     if (!trusted) return null;
     const parts = u.pathname.split('/').filter(Boolean);
-    // Look for known segment markers first
     const markers = new Set([
       'docx',
       'docs',
@@ -59,12 +59,6 @@ export function extractDocToken(url: string): string | null {
         return null;
       }
     }
-    // Best-effort fallback: last segment if it looks like a token AND there are
-    // >= 2 segments (avoids matching marketing URLs like /home or /docs alone).
-    if (parts.length >= 2) {
-      const last = parts[parts.length - 1];
-      if (looksLikeDocToken(last)) return last;
-    }
     return null;
   } catch {
     return null;
@@ -76,7 +70,14 @@ export async function runInit(args: InitArgs): Promise<number> {
   if (!docToken) {
     process.stderr.write(
       `[init] could not extract docToken from URL: ${args.docUrl}\n` +
-        `       Expected something like https://feishu.cn/docx/<token>\n`,
+        `       Supported URL shapes (must contain one of these path markers):\n` +
+        `         https://feishu.cn/docx/<token>\n` +
+        `         https://feishu.cn/wiki/<token>\n` +
+        `         https://feishu.cn/docs/<token>\n` +
+        `         https://feishu.cn/sheets/<token>\n` +
+        `         https://feishu.cn/base/<token>\n` +
+        `       If your URL doesn't fit any of the above, paste the docToken directly\n` +
+        `       into .openapi-lark.yaml and open an issue to expand the marker list.\n`,
     );
     return EXIT_CONFIG;
   }
