@@ -114,11 +114,14 @@ export function listWikiChildren(
   } catch (err) {
     throw new WikiError(`wiki +node-list returned non-JSON: ${(err as Error).message}`);
   }
-  // lark-cli's +node-list returns various shapes; normalize.
+  // Real shape (lark-cli 1.0.32): { data: { nodes: [...], has_more: bool } }
+  // Fall through other plausible shapes for forward compat.
   const items: any[] =
+    parsed?.data?.nodes ??
     parsed?.data?.items ??
+    parsed?.nodes ??
     parsed?.items ??
-    parsed?.data ??
+    (Array.isArray(parsed?.data) ? parsed.data : null) ??
     (Array.isArray(parsed) ? parsed : []);
   return (Array.isArray(items) ? items : []).map((n) => ({
     nodeToken: n.node_token,
@@ -168,7 +171,8 @@ export function createWikiChild(
   } catch (err) {
     throw new WikiError(`wiki +node-create returned non-JSON: ${(err as Error).message}`);
   }
-  const node = parsed?.data?.node ?? parsed?.node ?? parsed;
+  // Real shape (lark-cli 1.0.32): { data: { node_token, obj_token, ... } } — flat under data
+  const node = parsed?.data?.node ?? parsed?.data ?? parsed?.node ?? parsed;
   if (!node?.node_token || !node?.obj_token) {
     throw new WikiError(`wiki +node-create response missing tokens: ${r.stdout.slice(0, 200)}`);
   }
