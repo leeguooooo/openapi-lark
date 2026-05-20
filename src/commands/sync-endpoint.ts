@@ -7,7 +7,9 @@ import {
   splitByTag,
   titleForEndpoint,
   titleForTag,
+  type EndpointSlice,
 } from '../renderer/split-by-tag.js';
+import { autoGroupEndpoints } from '../renderer/auto-group.js';
 import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { push } from '../lark/push.js';
 import {
@@ -206,51 +208,157 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
 
     // Endpoints under this tag
     const slices = endpoints.filter((e) => e.tagId === tagId);
-    process.stdout.write(`[sync] ${svc.name}: ${tagId} has ${slices.length} endpoint(s)\n`);
+    // Auto-decide: 4-level (path-prefix sub-groups) when worthwhile, else flat
+    const grouping = autoGroupEndpoints(slices);
+    const groupKeys = Object.keys(grouping.groups);
+    if (groupKeys.length > 0) {
+      process.stdout.write(
+        `[sync] ${svc.name}: ${tagId} has ${slices.length} endpoint(s), ` +
+          `auto-grouping into ${groupKeys.length} sub-group(s) + ` +
+          `${grouping.singletons.length} singleton(s)\n`,
+      );
+    } else {
+      process.stdout.write(
+        `[sync] ${svc.name}: ${tagId} has ${slices.length} endpoint(s) (flat)\n`,
+      );
+    }
 
     const limit = pLimit(ctx.parallel);
-    const slicePushTasks = slices.map((slice) => async () => {
-      const leafTitle = titleForEndpoint(slice);
-      let leaf = popFromPool(leafPool, leafTitle);
-      if (!leaf) {
-        try {
-          leaf = createWikiChild(
-            parent.spaceId,
-            tagNode!.nodeToken,
-            leafTitle,
-            larkBin,
-          );
-        } catch (err) {
-          return {
-            service: `${svc.name} :: ${tagId} :: ${leafTitle}`,
-            status: 'failed' as const,
-            durationMs: 0,
-            reason: `createWikiChild(leaf) failed: ${(err as Error).message}`,
-          };
-        }
-      }
-      return renderAndPush({
-        ctx,
-        label: `${svc.name} :: ${tagId} :: ${leafTitle}`,
-        api: slice.api,
-        docToken: leaf.objToken,
-        outRel: `${ctx.outDirRel}/${safeFilename(tagId)}/${safeFilename(leafTitle)}.md`,
-        titleForLock: leafTitle,
-        singleOperationSummary: slice.summary,
-      });
-    });
-
-    // NOTE: createWikiChild must be SEQUENTIAL to avoid claiming the same pool
-    // slot or creating duplicate leaves under high parallelism. Push is the
-    // slow step (~1-2s), so we parallelize there.
     const leafResults: ServiceResult[] = [];
-    for (const task of slicePushTasks) {
-      const r = await limit(task);
+
+    // 1) Singletons: push directly under the tag node
+    for (const slice of grouping.singletons) {
+      const r = await limit(() =>
+        pushEndpointLeaf({
+          ctx,
+          svcName: svc.name,
+          tagId,
+          parentSpaceId: parent.spaceId,
+          parentNodeToken: tagNode!.nodeToken,
+          pool: leafPool,
+          slice,
+          larkBin,
+          outDirRelTag: `${ctx.outDirRel}/${safeFilename(tagId)}`,
+        }),
+      );
       leafResults.push(r);
     }
+
+    // 2) Multi-endpoint groups: create intermediate group node, then leaves
+    for (const groupKey of groupKeys) {
+      const groupTitle = grouping.groupTitles[groupKey] ?? groupKey;
+      // Find or create the group intermediate node under the tag
+      let groupNode = popFromPool(leafPool, groupTitle);
+      if (!groupNode) {
+        try {
+          groupNode = createWikiChild(
+            parent.spaceId,
+            tagNode!.nodeToken,
+            groupTitle,
+            larkBin,
+          );
+          process.stdout.write(
+            `[sync] ${svc.name}: created group node "${groupTitle}" (under ${tagId})\n`,
+          );
+        } catch (err) {
+          leafResults.push({
+            service: `${svc.name} :: ${tagId} :: ${groupTitle}`,
+            status: 'failed',
+            durationMs: 0,
+            reason: `createWikiChild(group) failed: ${(err as Error).message}`,
+          });
+          continue;
+        }
+      }
+      // List existing endpoint leaves under THIS group node
+      let groupLeafChildren: WikiChild[];
+      try {
+        groupLeafChildren = listWikiChildren(parent.spaceId, groupNode.nodeToken, larkBin);
+      } catch (err) {
+        leafResults.push({
+          service: `${svc.name} :: ${tagId} :: ${groupTitle}`,
+          status: 'failed',
+          durationMs: 0,
+          reason: `listWikiChildren(group-level) failed: ${(err as Error).message}`,
+        });
+        continue;
+      }
+      const groupLeafPool = poolByTitle(groupLeafChildren);
+      // Push the group intermediate doc itself (just a TOC)
+      const groupSlices = grouping.groups[groupKey];
+      const indexMd = buildTagIndexMarkdown(groupTitle, groupSlices);
+      leafResults.push(
+        await pushPrebuilt({
+          ctx,
+          label: `${svc.name} :: ${tagId} :: ${groupTitle} :: index`,
+          markdown: indexMd,
+          docToken: groupNode.objToken,
+          outRel: `${ctx.outDirRel}/${safeFilename(tagId)}/${safeFilename(groupTitle)}/_index.md`,
+          titleForLock: groupTitle,
+        }),
+      );
+      // Push the group's endpoint leaves
+      for (const slice of groupSlices) {
+        const r = await limit(() =>
+          pushEndpointLeaf({
+            ctx,
+            svcName: svc.name,
+            tagId,
+            parentSpaceId: parent.spaceId,
+            parentNodeToken: groupNode!.nodeToken,
+            pool: groupLeafPool,
+            slice,
+            larkBin,
+            outDirRelTag: `${ctx.outDirRel}/${safeFilename(tagId)}/${safeFilename(groupTitle)}`,
+            labelPrefixExtra: ` :: ${groupTitle}`,
+          }),
+        );
+        leafResults.push(r);
+      }
+    }
+
     results.push(...leafResults);
   }
   return results;
+}
+
+/** Push a single endpoint leaf — find/create wiki child + renderAndPush. */
+async function pushEndpointLeaf(args: {
+  ctx: EndpointSyncContext;
+  svcName: string;
+  tagId: string;
+  parentSpaceId: string;
+  parentNodeToken: string;
+  pool: Map<string, WikiChild[]>;
+  slice: EndpointSlice;
+  larkBin: string;
+  outDirRelTag: string;
+  labelPrefixExtra?: string;
+}): Promise<ServiceResult> {
+  const { ctx, svcName, tagId, parentSpaceId, parentNodeToken, pool, slice, larkBin, outDirRelTag, labelPrefixExtra } = args;
+  const leafTitle = titleForEndpoint(slice);
+  let leaf = popFromPool(pool, leafTitle);
+  if (!leaf) {
+    try {
+      leaf = createWikiChild(parentSpaceId, parentNodeToken, leafTitle, larkBin);
+    } catch (err) {
+      return {
+        service: `${svcName} :: ${tagId}${labelPrefixExtra ?? ''} :: ${leafTitle}`,
+        status: 'failed' as const,
+        durationMs: 0,
+        reason: `createWikiChild(leaf) failed: ${(err as Error).message}`,
+      };
+    }
+  }
+  return renderAndPush({
+    ctx,
+    label: `${svcName} :: ${tagId}${labelPrefixExtra ?? ''} :: ${leafTitle}`,
+    api: slice.api,
+    docToken: leaf.objToken,
+    outRel: `${outDirRelTag}/${safeFilename(leafTitle)}.md`,
+    titleForLock: leafTitle,
+    singleOperationSummary: slice.summary,
+  });
 }
 
 function poolByTitle(children: WikiChild[]): Map<string, WikiChild[]> {
