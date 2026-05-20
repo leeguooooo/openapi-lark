@@ -294,32 +294,24 @@ function safeFilename(s: string): string {
  * Force the docx + wiki-node title to `title`.
  *
  * Real-world calibration (lark-cli 1.0.32 + ap-southeast-1):
- *   - Markdown WITHOUT YAML front-matter → docx title becomes "Untitled" or
- *     "Authentication" (taken from first body H1 if any starts with "Auth...")
- *   - Markdown WITH widdershins front-matter `title: X` → docx title = X
- *   - `docs +update --new-title X` is silently ignored under --command overwrite
+ *   - Markdown YAML front-matter `title:` is IGNORED by lark-cli
+ *   - `docs +update --new-title X` is IGNORED under --command overwrite
+ *   - lark-cli picks the FIRST `# H1` in the BODY as the docx title
+ *   - No body H1 → docx title becomes "Untitled"
  *
- * Strategy: KEEP the front-matter but rewrite its `title:` line to our target.
- * If the markdown has no front-matter, inject a minimal one.
+ * Strategy: keep front-matter intact (its other settings are harmless), then
+ * prepend `# <title>` as the FIRST line of the body so lark-cli locks onto it.
  */
 export function lockTitleInMarkdown(md: string, title: string): string {
-  const escaped = title.replace(/"/g, '\\"');
   if (md.startsWith('---')) {
     const closeIdx = md.indexOf('\n---', 3);
     if (closeIdx > 0) {
-      const fmRaw = md.slice(0, closeIdx + 4); // includes both `---` markers
-      const body = md.slice(closeIdx + 4);
-      // Replace existing `title: ...` (line at start of front-matter) or insert one
-      let newFm: string;
-      if (/^title:\s*.*$/m.test(fmRaw)) {
-        newFm = fmRaw.replace(/^title:\s*.*$/m, `title: "${escaped}"`);
-      } else {
-        // Inject after the opening `---\n`
-        newFm = fmRaw.replace(/^---\n/, `---\ntitle: "${escaped}"\n`);
-      }
-      return newFm + body;
+      const fmEnd = closeIdx + 4; // position right after the closing `---\n`
+      const fm = md.slice(0, fmEnd);
+      const body = md.slice(fmEnd).replace(/^\n+/, '');
+      return `${fm}\n# ${title}\n\n${body}`;
     }
   }
-  // No usable front-matter — inject a minimal one + keep the body intact
-  return `---\ntitle: "${escaped}"\n---\n\n${md}`;
+  // No front-matter — just prepend the H1
+  return `# ${title}\n\n${md}`;
 }
