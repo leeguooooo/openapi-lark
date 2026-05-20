@@ -15,6 +15,8 @@ export interface Config {
   extends?: string;
   pushTimeoutMs?: number;
   maxResolvedSizeBytes?: number;
+  /** Binary name in PATH; defaults to "lark-cli". Override e.g. "lark" or absolute path. */
+  larkBin?: string;
 }
 
 export interface ServiceResult {

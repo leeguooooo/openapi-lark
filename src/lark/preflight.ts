@@ -27,7 +27,7 @@ export interface PreflightResult {
  * Throws PreflightError on missing binary, unparseable version, or mismatch.
  */
 export function preflight(input: PreflightInput): PreflightResult {
-  const bin = input.larkBin ?? 'lark';
+  const bin = input.larkBin ?? 'lark-cli';
   const res = spawnSync(bin, ['--version'], {
     encoding: 'utf8',
     env: input.env ?? process.env,
@@ -35,7 +35,8 @@ export function preflight(input: PreflightInput): PreflightResult {
   });
   if (res.error && (res.error as NodeJS.ErrnoException).code === 'ENOENT') {
     throw new PreflightError(
-      `lark-cli binary "${bin}" not found in PATH. Install with: npx skills add leeguooooo/lark-cli (or your team's distribution channel).`,
+      `lark-cli binary "${bin}" not found in PATH. ` +
+        `Install lark-cli (e.g. brew install lark-cli) or override with config field "larkBin".`,
     );
   }
   if (res.status !== 0) {

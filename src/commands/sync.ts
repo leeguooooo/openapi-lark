@@ -55,7 +55,10 @@ export async function runSync(args: SyncArgs): Promise<number> {
   // Preflight runs in ALL modes (incl. dry-run). Spec data flow: preflight → lint → render → push.
   // --dry-run only skips the push step; environment must still be valid.
   try {
-    const p = preflight({ larkCliRange: loaded.config.engines.larkCli });
+    const p = preflight({
+      larkBin: loaded.config.larkBin,
+      larkCliRange: loaded.config.engines.larkCli,
+    });
     process.stdout.write(`[sync] preflight ok: ${p.bin} ${p.version}\n`);
   } catch (err) {
     if (err instanceof PreflightError) {
@@ -115,6 +118,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
           const pushed = push({
             docToken: svc.docToken,
             mdPath: outPath,
+            larkBin: loaded.config.larkBin,
             timeoutMs,
           });
           if (pushed.ok) {

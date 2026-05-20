@@ -50,7 +50,10 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
   // 2. lark-cli preflight (requires engines.larkCli; we use loaded config if available)
   if (loaded) {
     try {
-      const p = preflight({ larkCliRange: loaded.config.engines.larkCli });
+      const p = preflight({
+        larkBin: loaded.config.larkBin,
+        larkCliRange: loaded.config.engines.larkCli,
+      });
       checks.push({
         name: 'lark-cli',
         status: 'pass',

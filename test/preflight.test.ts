@@ -16,6 +16,7 @@ afterAll(() => {
 describe('preflight', () => {
   it('passes when version satisfies range', () => {
     const r = preflight({
+      larkBin: 'lark',
       larkCliRange: '>=1.0.0',
       env: {
         PATH: pathWith(fakeDir),
@@ -28,6 +29,7 @@ describe('preflight', () => {
 
   it('passes when version contains prefix text', () => {
     const r = preflight({
+      larkBin: 'lark',
       larkCliRange: '>=0.1.0',
       env: {
         PATH: pathWith(fakeDir),
@@ -41,6 +43,7 @@ describe('preflight', () => {
   it('rejects when version too old', () => {
     expect(() =>
       preflight({
+        larkBin: 'lark',
         larkCliRange: '>=2.0.0',
         env: {
           PATH: pathWith(fakeDir),

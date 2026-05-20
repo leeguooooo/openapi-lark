@@ -51,6 +51,7 @@ describe('sync --dry-run', () => {
       cfg,
       `engines:
   larkCli: ">=0.0.0"
+larkBin: lark
 services:
   - name: voice-room
     openapi: api/openapi.yaml
@@ -73,6 +74,7 @@ services:
       cfg,
       `engines:
   larkCli: ">=0.0.0"
+larkBin: lark
 services:
   - name: a
     openapi: api/openapi.yaml
@@ -90,6 +92,7 @@ services:
       cfg,
       `engines:
   larkCli: ">=0.0.0"
+larkBin: lark
 services:
   - name: a
     openapi: api/openapi.yaml

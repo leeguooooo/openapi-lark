@@ -66,7 +66,7 @@ function classifyFailure(stderr: string, status: number | null): PushFailureReas
  * Timeout: spawnSync's `timeout` kills the process via SIGTERM after `timeoutMs`.
  */
 export function push(input: PushInput): PushResult {
-  const bin = input.larkBin ?? 'lark';
+  const bin = input.larkBin ?? 'lark-cli';
   const args = [...PUSH_ARGS, input.docToken, '--file', input.mdPath];
   const spawnOpts = {
     encoding: 'utf8' as const,

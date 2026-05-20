@@ -40,6 +40,7 @@ export const ConfigSchema = z.object({
       `maxResolvedSizeBytes must be >= ${MIN_MAX_RESOLVED_SIZE_BYTES}`,
     )
     .default(DEFAULT_MAX_RESOLVED_SIZE_BYTES),
+  larkBin: z.string().min(1).optional(),
 });
 
 export type ConfigInput = z.input<typeof ConfigSchema>;
