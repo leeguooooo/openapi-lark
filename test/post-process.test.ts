@@ -134,10 +134,50 @@ body`;
     expect(out).toContain('## op');
   });
 
-  it('collapses 3+ blank lines to 2', () => {
-    const md = `a\n\n\n\n\nb`;
-    const out = stripWiddershinsBoilerplate(md);
+  // Blank-line collapse was moved out of stripWiddershinsBoilerplate to the
+  // final stage in postProcess (so collapse runs after ALL transforms).
+  it('postProcess collapses 3+ blank lines to 2', () => {
+    const out = postProcess(`a\n\n\n\n\nb`);
     expect(out).toBe(`a\n\nb`);
+  });
+
+  it('removes "200 Response" callout + following JSON dump', () => {
+    const md = `body
+
+> 200 Response
+
+\`\`\`json
+{
+  "allOf": [{ "type": "object" }]
+}
+\`\`\`
+
+### 响应`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('200 Response');
+    expect(out).not.toContain('"allOf"');
+    expect(out).toContain('### 响应');
+    expect(out).toContain('body');
+  });
+
+  it('removes multiple status response dumps', () => {
+    const md = `> 200 Response
+
+\`\`\`json
+{}
+\`\`\`
+
+> 400 Response
+
+\`\`\`json
+{}
+\`\`\`
+
+after`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('200 Response');
+    expect(out).not.toContain('400 Response');
+    expect(out).toContain('after');
   });
 });
 

@@ -183,6 +183,16 @@ export function stripWiddershinsBoilerplate(md: string): string {
   // widdershins <aside> blocks: "This operation does not require authentication"
   // and similar are useless when we render per-endpoint
   out = out.replace(/<aside[^>]*>[\s\S]*?<\/aside>/g, '');
+  // "> NNN Response" callout + the JSON code block that follows. Widdershins
+  // tries to synthesize an "example response" but for schemas using allOf /
+  // discriminator / refs, it dumps the SCHEMA DEFINITION (keys like type/
+  // required/properties) instead of a value — confusing and wrong. The
+  // response schema table already captures the structure properly, so we
+  // remove the broken sample. We match `> <status> Response\n\n```json … ```\n`
+  out = out.replace(
+    /^>\s*\d{3}\s+Response\s*$\n+```[a-zA-Z0-9]*\n[\s\S]*?\n```\s*$/gm,
+    '',
+  );
   return out;
 }
 
