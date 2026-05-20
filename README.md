@@ -89,6 +89,23 @@ openapi-lark doctor    诊断 lark-cli / auth / docToken / resolved size
 | 2 | 配置错误（yaml 缺失 / schema 失败 / env 未注入） |
 | 3 | 环境错误（lark-cli 缺失 / 版本不达标 / auth 失效） |
 
+## 大小限制（实测）
+
+飞书 docx v2 update API 在 ap-southeast-1 区实测：
+
+| markdown 大小 | 结果 |
+|---|---|
+| ≤ 500 KB | ✓ `result: success` |
+| ~ 200 KB（截断） | ⚠ `partial_success` |
+| ≥ 1 MB | ✗ `server time out error`（60s 后失败） |
+
+v1 默认 `maxPushBytes: 614400`（600 KB），sync 前 pre-check 渲染大小；超过会 fail-fast 而不是等 60s 超时。可在 `.openapi-lark.yaml` 顶层 `maxPushBytes` 覆盖。
+
+**超大 openapi 的处理思路**（v1 不内置自动拆分，需手工）：
+- 用 widdershins 模板过滤 internal-only tag
+- 拆成多个 service，每个 service 对应自己的 docToken
+- 等 v1.1 内置「按 tag 自动拆分」
+
 ## KNOWN_ISSUES（飞书 docx markdown quirks）
 
 下面 5 项是预先识别的踩坑，渲染层已做对策。如果你看到这些症状，先对照本节，再决定要不要报 bug：

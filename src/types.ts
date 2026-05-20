@@ -17,6 +17,9 @@ export interface Config {
   maxResolvedSizeBytes?: number;
   /** Binary name in PATH; defaults to "lark-cli". Override e.g. "lark" or absolute path. */
   larkBin?: string;
+  /** Max md size in bytes; pre-push check fails fast with size guidance.
+   *  Default 600 KB (well below the 1 MB lark-cli server-time-out boundary observed in ap-southeast-1). */
+  maxPushBytes?: number;
 }
 
 export interface ServiceResult {
@@ -38,3 +41,9 @@ export const DEFAULT_PUSH_TIMEOUT_MS = 120_000;
 export const DEFAULT_MAX_RESOLVED_SIZE_BYTES = 50 * 1024 * 1024;
 export const MIN_MAX_RESOLVED_SIZE_BYTES = 1 * 1024 * 1024;
 export const MIN_PUSH_TIMEOUT_MS = 5_000;
+/** Real-world calibration (2026-05-20, lark-cli v1.0.32, ap-southeast-1):
+ *  500 KB markdown — success
+ *  1 MB markdown   — server time out
+ *  Default cutoff: 600 KB, leave headroom; configurable via maxPushBytes. */
+export const DEFAULT_MAX_PUSH_BYTES = 600 * 1024;
+export const MIN_MAX_PUSH_BYTES = 1024;

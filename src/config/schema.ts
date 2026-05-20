@@ -4,6 +4,8 @@ import {
   DEFAULT_MAX_RESOLVED_SIZE_BYTES,
   MIN_MAX_RESOLVED_SIZE_BYTES,
   MIN_PUSH_TIMEOUT_MS,
+  DEFAULT_MAX_PUSH_BYTES,
+  MIN_MAX_PUSH_BYTES,
 } from '../types.js';
 
 export const RenderSchema = z.object({
@@ -41,6 +43,11 @@ export const ConfigSchema = z.object({
     )
     .default(DEFAULT_MAX_RESOLVED_SIZE_BYTES),
   larkBin: z.string().min(1).optional(),
+  maxPushBytes: z
+    .number()
+    .int()
+    .min(MIN_MAX_PUSH_BYTES, `maxPushBytes must be >= ${MIN_MAX_PUSH_BYTES}`)
+    .default(DEFAULT_MAX_PUSH_BYTES),
 });
 
 export type ConfigInput = z.input<typeof ConfigSchema>;

@@ -114,6 +114,25 @@ export async function runSync(args: SyncArgs): Promise<number> {
             return;
           }
 
+          // Size guard — fail fast before lark-cli hits server timeout (~60s)
+          const renderedBytes = Buffer.byteLength(result.markdown, 'utf8');
+          if (renderedBytes > loaded.config.maxPushBytes) {
+            results[idx] = {
+              service: svc.name,
+              status: 'failed',
+              durationMs: Date.now() - started,
+              reason:
+                `rendered ${(renderedBytes / 1024).toFixed(0)} KB exceeds maxPushBytes ` +
+                `(${(loaded.config.maxPushBytes / 1024).toFixed(0)} KB). ` +
+                `Feishu docx server times out around 1 MB. ` +
+                `Options: (1) raise maxPushBytes if you've verified your tenant handles it; ` +
+                `(2) trim the openapi (filter tags / hide internal endpoints); ` +
+                `(3) split into multiple services with separate docTokens. ` +
+                `Local render saved at ${absOutPath}.`,
+            };
+            return;
+          }
+
           const pushed = push({
             docToken: svc.docToken,
             mdPath: relOutPath,
