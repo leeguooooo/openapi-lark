@@ -27,12 +27,29 @@ export interface SplitResult {
   byTag: Record<string, any>;
 }
 
+/**
+ * Build a sub-api template carrying common metadata but DROPPING components.schemas.
+ *
+ * Why drop schemas: swagger-parser.dereference() inlines every $ref into the
+ * operations, so each sub-api's paths already contain fully-expanded schemas.
+ * Keeping the full components.schemas in every sub-api duplicates the entire
+ * schema catalog into every tag bucket (real-world: voice-room had 1.8MB of
+ * components in each shard while paths only referenced a few schemas).
+ *
+ * We keep securitySchemes so the Authentication section still renders.
+ */
 function cloneShallow(api: any): any {
+  const safeComponents = api.components
+    ? {
+        securitySchemes: api.components.securitySchemes,
+        // intentionally drop schemas / parameters / responses / examples / headers
+      }
+    : undefined;
   return {
     openapi: api.openapi,
     info: api.info,
     servers: api.servers,
-    components: api.components,
+    components: safeComponents,
     security: api.security,
     tags: api.tags,
     externalDocs: api.externalDocs,

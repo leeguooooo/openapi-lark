@@ -241,5 +241,8 @@ async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
 }
 
 function safeFilename(s: string): string {
-  return s.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80);
+  // Keep ASCII word chars + CJK unified ideographs; replace others with _.
+  // Without CJK preservation, voice-room tags 语音房/管理端/... all collapse to "_"
+  // and the per-tag .md files overwrite each other.
+  return s.replace(/[^a-zA-Z0-9._\-一-鿿]+/g, '_').slice(0, 80);
 }
