@@ -291,17 +291,35 @@ function safeFilename(s: string): string {
 }
 
 /**
- * Strip widdershins YAML front-matter and prepend our own `# <title>` as the
- * absolute first H1. Forces lark-cli `docs +update --command overwrite` to use
- * `<title>` as the docx + wiki node title.
+ * Force the docx + wiki-node title to `title`.
+ *
+ * Real-world calibration (lark-cli 1.0.32 + ap-southeast-1):
+ *   - Markdown WITHOUT YAML front-matter → docx title becomes "Untitled" or
+ *     "Authentication" (taken from first body H1 if any starts with "Auth...")
+ *   - Markdown WITH widdershins front-matter `title: X` → docx title = X
+ *   - `docs +update --new-title X` is silently ignored under --command overwrite
+ *
+ * Strategy: KEEP the front-matter but rewrite its `title:` line to our target.
+ * If the markdown has no front-matter, inject a minimal one.
  */
 export function lockTitleInMarkdown(md: string, title: string): string {
-  let body = md;
-  if (body.startsWith('---')) {
-    const closeIdx = body.indexOf('\n---', 3);
+  const escaped = title.replace(/"/g, '\\"');
+  if (md.startsWith('---')) {
+    const closeIdx = md.indexOf('\n---', 3);
     if (closeIdx > 0) {
-      body = body.slice(closeIdx + 4).replace(/^\n+/, '');
+      const fmRaw = md.slice(0, closeIdx + 4); // includes both `---` markers
+      const body = md.slice(closeIdx + 4);
+      // Replace existing `title: ...` (line at start of front-matter) or insert one
+      let newFm: string;
+      if (/^title:\s*.*$/m.test(fmRaw)) {
+        newFm = fmRaw.replace(/^title:\s*.*$/m, `title: "${escaped}"`);
+      } else {
+        // Inject after the opening `---\n`
+        newFm = fmRaw.replace(/^---\n/, `---\ntitle: "${escaped}"\n`);
+      }
+      return newFm + body;
     }
   }
-  return `# ${title}\n\n${body}`;
+  // No usable front-matter — inject a minimal one + keep the body intact
+  return `---\ntitle: "${escaped}"\n---\n\n${md}`;
 }

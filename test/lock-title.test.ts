@@ -2,44 +2,39 @@ import { describe, it, expect } from 'vitest';
 import { lockTitleInMarkdown } from '../src/commands/sync-tree.js';
 
 describe('lockTitleInMarkdown', () => {
-  it('strips widdershins YAML front-matter and prepends new H1', () => {
+  it('replaces existing title: in widdershins front-matter', () => {
     const md = `---
 title: 语音房服务 API v1.0.0
 language_tabs:
   - curl: curl
 ---
 
-<h1 id="-api">语音房服务 API v1.0.0</h1>
-
-> intro
-
 # Authentication
-
-- bearer
+body
 `;
     const out = lockTitleInMarkdown(md, '基础服务');
-    expect(out.startsWith('# 基础服务\n')).toBe(true);
-    expect(out).not.toContain('language_tabs');
+    expect(out).toContain('title: "基础服务"');
     expect(out).not.toContain('title: 语音房服务');
-    expect(out).toContain('<h1 id="-api">语音房服务 API v1.0.0</h1>');
+    expect(out).toContain('language_tabs:');
+    expect(out).toContain('# Authentication');
   });
 
-  it('works with no front-matter', () => {
-    const md = `# 原标题\n\nbody`;
+  it('injects minimal front-matter when none exists', () => {
+    const md = `# heading\n\nbody`;
     const out = lockTitleInMarkdown(md, '新标题');
-    expect(out.split('\n')[0]).toBe('# 新标题');
-    expect(out).toContain('# 原标题');
+    expect(out.startsWith('---\ntitle: "新标题"\n---')).toBe(true);
+    expect(out).toContain('# heading');
   });
 
-  it('handles empty body after front-matter', () => {
-    const md = `---\nfoo: bar\n---\n`;
+  it('inserts title: into front-matter that has no existing title', () => {
+    const md = `---\nlanguage_tabs: []\n---\n\nbody`;
     const out = lockTitleInMarkdown(md, 'X');
-    expect(out).toBe('# X\n\n');
+    expect(out).toMatch(/^---\ntitle: "X"\nlanguage_tabs: \[\]\n---/);
   });
 
-  it('does not treat lone --- as front-matter', () => {
-    const md = `---\n\nbody without close`;
-    const out = lockTitleInMarkdown(md, 'X');
-    expect(out.startsWith('# X\n\n---')).toBe(true);
+  it('escapes double quotes in title', () => {
+    const md = `# x\nbody`;
+    const out = lockTitleInMarkdown(md, 'My "Quoted" Title');
+    expect(out).toContain('title: "My \\"Quoted\\" Title"');
   });
 });
