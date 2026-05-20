@@ -18,6 +18,10 @@ export interface PushInput {
   cwd?: string;
   larkBin?: string;
   timeoutMs: number;
+  /** If set, pass --new-title to lock the docx + wiki node title.
+   *  Without this, `--command overwrite` mode steals the title from one of the
+   *  H1s in the markdown body (observed in lark-cli 1.0.32). */
+  newTitle?: string;
   /** Pass-through for testing — override process.env */
   env?: NodeJS.ProcessEnv;
 }
@@ -96,6 +100,9 @@ export function push(input: PushInput): PushResult {
     '--content',
     `@${input.mdPath}`,
   ];
+  if (input.newTitle) {
+    args.push('--new-title', input.newTitle);
+  }
   const spawnOpts = {
     encoding: 'utf8' as const,
     env: input.env ?? process.env,

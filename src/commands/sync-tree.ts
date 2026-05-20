@@ -89,7 +89,9 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
     `[sync] ${svc.name}: split into ${tagIds.length} tag(s) + 1 overview\n`,
   );
 
-  // Step 3: render + push overview to the parent docx
+  // Step 3: render + push overview to the parent docx.
+  // newTitle: keep whatever the user already set on the parent wiki node.
+  // We deliberately do NOT change parent title here.
   mkdirSync(resolve(ctx.basedir, ctx.outDirRel), { recursive: true });
   results.push(
     await renderAndPush({
@@ -98,6 +100,7 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
       api: split.overview,
       docToken: parent.objToken,
       outRel: `${ctx.outDirRel}/_overview.md`,
+      newTitle: parent.title, // preserve the existing parent title
     }),
   );
 
@@ -118,52 +121,77 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
     });
     return results;
   }
-  const childByTitle = new Map<string, (typeof children)[number]>();
-  for (const c of children) childByTitle.set(c.title.trim().toLowerCase(), c);
+  // Build a pool of unclaimed children, indexed by lowercase title. We allow
+  // multiple children per title (the wiki shows duplicates if a prior sync
+  // failed mid-flight). Also collect "zombie" children whose title was clobbered
+  // to a generic value (e.g. "Authentication" — observed when prior runs did
+  // `docs +update --command overwrite` without --new-title and the widdershins
+  // markdown's first H1 was taken as the docx title) — those are recyclable.
+  const titlePool = new Map<string, (typeof children)[number][]>();
+  for (const c of children) {
+    const key = c.title.trim().toLowerCase();
+    if (!titlePool.has(key)) titlePool.set(key, []);
+    titlePool.get(key)!.push(c);
+  }
+  const ZOMBIE_TITLE_KEYS = ['authentication']; // observed clobber target
+  const claimChild = (preferredTitle: string): typeof children[number] | undefined => {
+    const exact = titlePool.get(preferredTitle.trim().toLowerCase());
+    if (exact && exact.length > 0) return exact.shift();
+    for (const k of ZOMBIE_TITLE_KEYS) {
+      const z = titlePool.get(k);
+      if (z && z.length > 0) return z.shift();
+    }
+    return undefined;
+  };
 
   // Step 5: process tag buckets (parallel-limited)
+  // NOTE: we MUST claim children sequentially before kicking off parallel
+  // pushes, otherwise two tags could race and both claim the same child.
+  const claimed: Array<{ tagId: string; title: string; docToken: string; created: boolean }> = [];
+  for (const tagId of tagIds) {
+    const title = titleForTag(tagId, api, svc.tagAliases);
+    const existing = claimChild(title);
+    if (existing) {
+      claimed.push({ tagId, title, docToken: existing.objToken, created: false });
+      continue;
+    }
+    try {
+      const created = createWikiChild(
+        parent.spaceId,
+        parent.nodeToken,
+        title,
+        ctx.config.larkBin ?? 'lark-cli',
+      );
+      claimed.push({ tagId, title, docToken: created.objToken, created: true });
+      process.stdout.write(
+        `[sync] ${svc.name}: created child node "${title}" -> ${created.objToken}\n`,
+      );
+    } catch (err) {
+      results.push({
+        service: `${svc.name} :: ${tagId}`,
+        status: 'failed',
+        durationMs: 0,
+        reason: `createWikiChild failed: ${(err as Error).message}`,
+      });
+    }
+  }
+
   const limit = pLimit(ctx.parallelChildren);
   const tagResults = await Promise.all(
-    tagIds.map((tagId) =>
+    claimed.map(({ tagId, title, docToken }) =>
       limit(async () => {
-        const title = titleForTag(tagId, api, svc.tagAliases);
-        let docToken: string;
-        const existing = childByTitle.get(title.trim().toLowerCase());
-        if (existing) {
-          docToken = existing.objToken;
-        } else {
-          try {
-            const created = createWikiChild(
-              parent.spaceId,
-              parent.nodeToken,
-              title,
-              ctx.config.larkBin ?? 'lark-cli',
-            );
-            docToken = created.objToken;
-            process.stdout.write(
-              `[sync] ${svc.name}: created child node "${title}" -> ${docToken}\n`,
-            );
-          } catch (err) {
-            return {
-              service: `${svc.name} :: ${tagId}`,
-              status: 'failed' as const,
-              durationMs: 0,
-              reason: `createWikiChild failed: ${(err as Error).message}`,
-            };
-          }
-        }
         return renderAndPush({
           ctx,
           label: `${svc.name} :: ${tagId}`,
           api: split.byTag[tagId],
           docToken,
           outRel: `${ctx.outDirRel}/tag-${safeFilename(tagId)}.md`,
+          newTitle: title, // lock child title to the resolved tag title
         });
       }),
     ),
   );
   results.push(...tagResults);
-
   return results;
 }
 
@@ -173,6 +201,9 @@ interface RenderAndPushArgs {
   api: unknown;
   docToken: string;
   outRel: string;
+  /** When set, push will issue --new-title to lock the wiki node title against
+   *  widdershins' "first H1" title-stealing behavior. */
+  newTitle?: string;
 }
 
 async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
@@ -222,6 +253,7 @@ async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
+    newTitle: args.newTitle,
   });
   if (pushed.ok) {
     return {
