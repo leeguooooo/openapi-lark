@@ -7,6 +7,7 @@ import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { runTreeSync } from './sync-tree.js';
 import { runEndpointSync } from './sync-endpoint.js';
 import { loadLock, saveLock } from '../sync-lock.js';
+import { resolveDocTokens } from './resolve-doctokens.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
 import { push } from '../lark/push.js';
 import {
@@ -85,6 +86,26 @@ export async function runSync(args: SyncArgs): Promise<number> {
 
   const timeoutMs = args.pushTimeoutMs ?? loaded.config.pushTimeoutMs;
   const results: ServiceResult[] = new Array(services.length);
+
+  // Resolve missing docTokens by auto-creating wiki children under
+  // config.parentDocToken (v1.8). Mutates services in place; persists tokens
+  // to .openapi-lark/auto-tokens.json for reuse.
+  try {
+    const autoStats = resolveDocTokens(
+      loaded.basedir,
+      loaded.config,
+      loaded.config.larkBin ?? 'lark-cli',
+    );
+    if (autoStats.assigned > 0) {
+      process.stdout.write(
+        `[sync] resolved ${autoStats.assigned} docToken(s): ` +
+          `${autoStats.created} created, ${autoStats.reused} reused from cache\n`,
+      );
+    }
+  } catch (err) {
+    process.stderr.write(`[sync] docToken resolution failed: ${(err as Error).message}\n`);
+    return EXIT_CONFIG;
+  }
 
   // Lockfile: shared across all services in this run. Loaded once, saved once at end.
   const lock = loadLock(loaded.basedir);
@@ -256,7 +277,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
           }
 
           const pushed = push({
-            docToken: svc.docToken,
+            docToken: svc.docToken!,
             mdPath: relOutPath,
             cwd: loaded.basedir,
             larkBin: loaded.config.larkBin,

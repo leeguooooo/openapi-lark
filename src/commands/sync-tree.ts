@@ -44,7 +44,7 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
   // Step 1: resolve the wiki node
   let parent: ReturnType<typeof resolveWikiNode>;
   try {
-    parent = resolveWikiNode(svc.docToken, ctx.config.larkBin ?? 'lark-cli');
+    parent = resolveWikiNode(svc.docToken!, ctx.config.larkBin ?? 'lark-cli');
   } catch (err) {
     return [
       {

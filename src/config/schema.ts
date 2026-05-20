@@ -15,7 +15,7 @@ export const RenderSchema = z.object({
 export const ServiceSchema = z.object({
   name: z.string().min(1, 'service.name is required'),
   openapi: z.string().min(1, 'service.openapi is required'),
-  docToken: z.string().min(1, 'service.docToken is required (cannot be empty)'),
+  docToken: z.string().min(1).optional(),
   mode: z.enum(['single', 'tree', 'endpoint']).default('single'),
   tagAliases: z.record(z.string()).optional(),
   includeTags: z.array(z.string()).optional(),
@@ -53,7 +53,18 @@ export const ConfigSchema = z.object({
     .int()
     .min(MIN_MAX_PUSH_BYTES, `maxPushBytes must be >= ${MIN_MAX_PUSH_BYTES}`)
     .default(DEFAULT_MAX_PUSH_BYTES),
-});
+  parentDocToken: z.string().min(1).optional(),
+}).refine(
+  (cfg) => {
+    // Every service must either have its own docToken OR rely on parentDocToken
+    if (cfg.parentDocToken) return true;
+    return cfg.services.every((s) => typeof s.docToken === 'string' && s.docToken.length > 0);
+  },
+  {
+    message:
+      'Each service needs a docToken OR you must set top-level parentDocToken to auto-create per-service children.',
+  },
+);
 
 export type ConfigInput = z.input<typeof ConfigSchema>;
 export type ConfigParsed = z.output<typeof ConfigSchema>;

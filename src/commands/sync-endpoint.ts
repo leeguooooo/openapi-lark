@@ -68,7 +68,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
 
   let parent: ReturnType<typeof resolveWikiNode>;
   try {
-    parent = resolveWikiNode(svc.docToken, larkBin);
+    parent = resolveWikiNode(svc.docToken!, larkBin);
   } catch (err) {
     return [
       {

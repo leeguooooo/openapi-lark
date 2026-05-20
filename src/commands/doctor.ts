@@ -113,7 +113,13 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
         });
       }
       // docToken format sanity check (not authoritative — only catches obvious typos)
-      if (svc.docToken.length < 8) {
+      if (!svc.docToken) {
+        checks.push({
+          name: `service:${svc.name}.docToken`,
+          status: 'skipped',
+          detail: `no docToken yet — will be auto-created on next sync from parentDocToken`,
+        });
+      } else if (svc.docToken.length < 8) {
         checks.push({
           name: `service:${svc.name}.docToken`,
           status: 'fail',

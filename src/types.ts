@@ -1,7 +1,10 @@
 export interface ServiceConfig {
   name: string;
   openapi: string;
-  docToken: string;
+  /** Wiki node token serving as the per-service parent docx. Optional when
+   *  top-level `parentDocToken` is set — a child node will be auto-created
+   *  on first sync and its token persisted to .openapi-lark/auto-tokens.json. */
+  docToken?: string;
   /** 'single' (default): overwrite docToken's docx with full rendered output.
    *  'tree': 2-level — parent docx + child wiki node per tag.
    *  'endpoint': 3-level — parent docx + per-tag intermediate + leaf per
@@ -36,6 +39,11 @@ export interface Config {
   /** Max md size in bytes; pre-push check fails fast with size guidance.
    *  Default 600 KB (well below the 1 MB lark-cli server-time-out boundary observed in ap-southeast-1). */
   maxPushBytes?: number;
+  /** v1.8: Single shared wiki parent token. When set, services without their
+   *  own docToken auto-create sibling child wiki nodes under this parent on
+   *  first sync. Useful for multi-service projects (e.g. monorepo with 4
+   *  openapi specs) where the user only provides one wiki URL. */
+  parentDocToken?: string;
 }
 
 export interface ServiceResult {

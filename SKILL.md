@@ -22,7 +22,35 @@ npx skills add leeguooooo/openapi-lark
 - lark-cli 已安装（`brew install lark-cli`）+ 已登录 `lark-cli auth login`
 - 项目里有 `api/openapi.yaml`（或任意路径的 openapi 3.x yaml/json）
 
-## 新项目快速开始（最常见路径）
+## 多 service 项目（一个 wiki URL 接 N 个 openapi）
+
+v1.8 新支持：项目里有多个 openapi spec（admin / game / internal / ...），用户只给一个 wiki 父节点 URL。工具自动在该父节点下建 N 个兄弟子节点，每个 service 一个。
+
+```yaml
+# .openapi-lark.yaml
+parentDocToken: XJ51wLKIXidz...    # ← 用户给的 wiki URL 解析出来的 token
+services:
+  - name: admin
+    openapi: api/generated/admin/openapi.json
+    parentTitle: 管理端 API          # ← 自动创建的子节点标题
+    mode: endpoint
+  - name: game
+    openapi: api/generated/game/openapi.json
+    parentTitle: 用户端 API
+    mode: endpoint
+  - name: game-internal
+    openapi: api/generated/game-internal/openapi.json
+    parentTitle: 内部 API
+    mode: endpoint
+  - name: sports-event
+    openapi: api/generated/sports-event/openapi.json
+    parentTitle: 体育赛事 API
+    mode: endpoint
+```
+
+首次 sync 自动建 4 个子节点；token 存到 `.openapi-lark/auto-tokens.json`（gitignored），后续 sync 复用。
+
+## 单 service 项目（一个 openapi 一个 wiki URL）
 
 ```
 [1] 飞书 wiki 创建父节点

@@ -233,6 +233,59 @@ services:
     );
   });
 
+  it('accepts services without docToken when parentDocToken is set', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+parentDocToken: parentXXXXXXXXX
+services:
+  - name: admin
+    openapi: api/admin.yaml
+  - name: game
+    openapi: api/game.yaml
+`,
+    );
+    const loaded = loadConfig({ configPath: path, env: {} });
+    expect(loaded.config.parentDocToken).toBe('parentXXXXXXXXX');
+    expect(loaded.config.services).toHaveLength(2);
+    expect(loaded.config.services[0].docToken).toBeUndefined();
+  });
+
+  it('rejects services without docToken when parentDocToken absent', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+services:
+  - name: admin
+    openapi: api/admin.yaml
+`,
+    );
+    expect(() => loadConfig({ configPath: path, env: {} })).toThrow(
+      /docToken|parentDocToken/i,
+    );
+  });
+
+  it('mix: some services have explicit docToken, others rely on parentDocToken', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+parentDocToken: parentXXXXXXXXX
+services:
+  - name: admin
+    openapi: api/admin.yaml
+    docToken: explicit12345
+  - name: game
+    openapi: api/game.yaml
+`,
+    );
+    const loaded = loadConfig({ configPath: path, env: {} });
+    expect(loaded.config.services[0].docToken).toBe('explicit12345');
+    expect(loaded.config.services[1].docToken).toBeUndefined();
+  });
+
   it('rejects duplicate service names', () => {
     const path = writeFile(
       '.openapi-lark.yaml',
