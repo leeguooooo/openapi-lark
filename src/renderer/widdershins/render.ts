@@ -14,24 +14,28 @@ export interface RenderOutput {
 }
 
 /**
- * Widdershins options tuned for 飞书 docx:
+ * Widdershins options tuned for 飞书 docx & size-efficiency:
  *  - language_tabs: only curl (KNOWN_ISSUE #4: multi-lang tabs render as raw blocks)
  *  - omitHeader: we write our own service-prefixed header
- *  - codeSamples: keep curl example only
+ *  - codeSamples: false (saves ~30-40% of output; users see schemas, not duplicated examples)
  *  - search: false
  *  - tocSummary: false (flat)
  *  - resolve: false — we dereference upstream via swagger-parser
  *  - httpsnippet: false (avoid dependency surprises)
+ *  - shallowSchemas: true — collapse deeply-nested types to refs/summaries instead of
+ *    fully inlining repetitive enumerations (real-world: voice-room "Enumerated Values"
+ *    blocks contributed >50% of bytes + 200+ heading-jump warnings)
+ *  - expandBody: false — body schema rendered as a single table, not expanded recursively
  */
 const WIDDERSHINS_OPTIONS = {
   language_tabs: [{ curl: 'curl' }],
   omitHeader: false,
-  codeSamples: true,
+  codeSamples: false,
   resolve: false,
   search: false,
   tocSummary: false,
-  shallowSchemas: false,
-  expandBody: true,
+  shallowSchemas: true,
+  expandBody: false,
   httpsnippet: false,
   user_templates: undefined,
 };
