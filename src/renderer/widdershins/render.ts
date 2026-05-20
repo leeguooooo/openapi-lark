@@ -6,6 +6,9 @@ import { detectHeadingJumps, type HeadingWarning } from '../heading-check.js';
 export interface RenderInput {
   /** Dereferenced OpenAPI object */
   api: unknown;
+  /** When set, enables the "redundant operation intro" collapse — only safe
+   *  when the api contains exactly one operation (endpoint-mode leaf). */
+  singleOperationSummary?: string;
 }
 
 export interface RenderOutput {
@@ -64,7 +67,7 @@ export async function renderWiddershins(input: RenderInput): Promise<RenderOutpu
     }
   });
 
-  const md = postProcess(raw, input.api);
+  const md = postProcess(raw, input.api, input.singleOperationSummary);
   const headingWarnings = detectHeadingJumps(md);
   return { markdown: md, headingWarnings };
 }

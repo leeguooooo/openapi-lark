@@ -231,6 +231,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         docToken: leaf.objToken,
         outRel: `${ctx.outDirRel}/${safeFilename(tagId)}/${safeFilename(leafTitle)}.md`,
         titleForLock: leafTitle,
+        singleOperationSummary: slice.summary,
       });
     });
 
@@ -286,15 +287,18 @@ interface RAPArgs {
   docToken: string;
   outRel: string;
   titleForLock: string;
+  /** If this api contains exactly one operation, pass its summary here to
+   *  enable the redundant-intro collapse in post-process. */
+  singleOperationSummary?: string;
 }
 
 async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
-  const { ctx, label, api, docToken, outRel, titleForLock } = args;
+  const { ctx, label, api, docToken, outRel, titleForLock, singleOperationSummary } = args;
   const started = Date.now();
   let markdown: string;
   let warnings;
   try {
-    const out = await renderApi(api);
+    const out = await renderApi(api, 'widdershins', singleOperationSummary);
     markdown = lockTitleInMarkdown(out.markdown, titleForLock);
     warnings = out.headingWarnings;
   } catch (err) {

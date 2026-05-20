@@ -27,10 +27,14 @@ export interface RenderResponse {
 /**
  * Render an in-memory OpenAPI object (already dereferenced). Used by tree mode
  * which slices the api by tag before rendering each subset.
+ *
+ * `singleOperationSummary` enables a "collapse redundant operation intro"
+ * post-process that's only safe for endpoint-mode leaf docs (one op per api).
  */
 export async function renderApi(
   api: unknown,
   engine: Engine = 'widdershins',
+  singleOperationSummary?: string,
 ): Promise<{ markdown: string; headingWarnings: HeadingWarning[] }> {
   if (engine === 'native') {
     throw new RenderError(
@@ -38,7 +42,7 @@ export async function renderApi(
     );
   }
   const { renderWiddershins } = await import('./widdershins/render.js');
-  return renderWiddershins({ api });
+  return renderWiddershins({ api, singleOperationSummary });
 }
 
 /**

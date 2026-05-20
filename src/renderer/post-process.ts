@@ -159,11 +159,65 @@ export function stripWiddershinsBoilerplate(md: string): string {
     /^\s*>\s*Scroll down for code samples, example requests and responses\..*$/gm,
     '',
   );
+  // "Code samples" sub-header (we turned code samples off; this header is dead)
+  out = out.replace(/^\s*>\s*Code samples\s*$/gm, '');
   // Generator comment
   out = out.replace(/<!--\s*Generator:\s*Widdershins[^>]*-->/g, '');
   // Empty "Example responses" / "200 Response" callouts that precede schema-only
   // sections become noise without examples
   out = out.replace(/^\s*>\s*Example responses\s*$/gm, '');
+  // Operation anchor links (`<a id="opIdXxx"></a>`) — purely for legacy
+  // single-page nav; we have per-endpoint wiki nodes now
+  out = out.replace(/<a\s+id="opId[^"]*"[^>]*>\s*<\/a>/g, '');
+  // Empty <h1>/<h2>/<h3> that only contain version/whitespace (widdershins
+  // emits `<h1 id="api"> v1.0.0</h1>` when info.title is intentionally blank)
+  out = out.replace(/<h([1-6])[^>]*>\s*v?\d+(?:\.\d+){1,3}\s*<\/h\1>/gi, '');
+  out = out.replace(/<h([1-6])[^>]*>\s*<\/h\1>/gi, '');
+  // Tag-level intro headings inside an endpoint doc (id="api--xxx").
+  // Endpoint mode renders one operation per doc — the tag header is the wiki
+  // node's parent, repeating it inside the doc is noise.
+  out = out.replace(/<h([1-6])[^>]*id="api--[^"]*"[^>]*>[\s\S]*?<\/h\1>/g, '');
+  // The "<h1 id="api">..." that widdershins emits for info.title (empty too
+  // when we suppress it) — also strip when content is just whitespace
+  out = out.replace(/<h([1-6])[^>]*id="api"[^>]*>\s*<\/h\1>/gi, '');
+  // widdershins <aside> blocks: "This operation does not require authentication"
+  // and similar are useless when we render per-endpoint
+  out = out.replace(/<aside[^>]*>[\s\S]*?<\/aside>/g, '');
+  return out;
+}
+
+/**
+ * For endpoint-mode leaf docs: the docx title (locked via lockTitleInMarkdown)
+ * already carries the summary. Widdershins also emits the summary as a `*X*`
+ * emphasis line right under the `## <operationId>` heading — redundant.
+ *
+ * This transform removes the `## <opid-or-summary>` operation heading (the doc
+ * title covers it) and the `*<summary>*` em line that follows.
+ *
+ * Returns md unchanged when no obvious operation pattern is detected (e.g.
+ * tag-index docs that contain multiple operations).
+ */
+export function collapseRedundantOperationIntro(md: string, summary?: string): string {
+  if (!summary) return md;
+  const sumEsc = summary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // ## <summary>\n`METHOD path`\n\n*<summary>*\n  →  `METHOD path`\n
+  // (Both summary line and em-summary line collapsed)
+  let out = md;
+  // Drop "## <summary>" when it precedes the method/path code span
+  out = out.replace(
+    new RegExp(
+      `^## ${sumEsc}\\s*\\n(?=\\s*\`[A-Z]+ \\/)`,
+      'm',
+    ),
+    '',
+  );
+  // Drop standalone "*<summary>*" emphasis line
+  out = out.replace(
+    new RegExp(`^\\*${sumEsc}\\*\\s*$`, 'gm'),
+    '',
+  );
+  // Collapse 3+ blank lines after removals
+  out = out.replace(/\n{3,}/g, '\n\n');
   return out;
 }
 
@@ -174,21 +228,28 @@ export function stripWiddershinsBoilerplate(md: string): string {
  */
 export function localizeHeadings(md: string): string {
   let out = md;
-  // ## / ### section headings (line-start only)
-  const headingMap: Array<[RegExp, string]> = [
-    [/^(#{2,6}) Parameters\s*$/gm, '$1 参数'],
-    [/^(#{2,6}) Body parameter\s*$/gm, '$1 请求体示例'],
-    [/^(#{2,6}) Responses\s*$/gm, '$1 响应'],
-    [/^(#{2,6}) Response Schema\s*$/gm, '$1 响应 Schema'],
-    [/^(#{2,6}) Response Headers\s*$/gm, '$1 响应头'],
-    [/^(#{2,6}) Enumerated Values\s*$/gm, '$1 枚举值'],
-    [/^(#{2,6}) Detailed descriptions\s*$/gm, '$1 详细说明'],
-    [/^(#{2,6}) Authentication\s*$/gm, '$1 鉴权'],
-    [/^(#{2,6}) Properties\s*$/gm, '$1 字段'],
-    [/^(#{2,6}) Schemas\s*$/gm, '$1 Schema 定义'],
+  // Section vocab — same translation applies to both markdown and HTML headings
+  const VOCAB: Array<[string, string]> = [
+    ['Parameters', '参数'],
+    ['Body parameter', '请求体示例'],
+    ['Responses', '响应'],
+    ['Response Schema', '响应 Schema'],
+    ['Response Headers', '响应头'],
+    ['Enumerated Values', '枚举值'],
+    ['Detailed descriptions', '详细说明'],
+    ['Authentication', '鉴权'],
+    ['Properties', '字段'],
+    ['Schemas', 'Schema 定义'],
   ];
-  for (const [re, repl] of headingMap) {
-    out = out.replace(re, repl);
+  for (const [en, zh] of VOCAB) {
+    // ## / ### markdown headings (line-start only)
+    out = out.replace(new RegExp(`^(#{2,6}) ${en}\\s*$`, 'gm'), `$1 ${zh}`);
+    // <h2>..</h2> / <h3>..</h3> / etc. HTML headings (widdershins emits these
+    // for operation sub-sections in some templates)
+    out = out.replace(
+      new RegExp(`(<h([1-6])[^>]*>)\\s*${en}\\s*(</h\\2>)`, 'g'),
+      `$1${zh}$3`,
+    );
   }
   // Table headers that widdershins always emits (Name | Type | Required | ... )
   // Only rewrite when the four-column "Parameters" or "Properties" pattern is
@@ -240,13 +301,21 @@ export function replaceOperationIdHeadings(md: string, api: any): string {
 /**
  * Run all post-processors in a defined order. `api` is optional; supply it to
  * enable operationId→summary heading replacement.
+ *
+ * `singleOperationSummary` enables the redundant-intro collapse (only safe for
+ * endpoint-mode leaf docs where there's exactly one operation).
  */
-export function postProcess(md: string, api?: any): string {
+export function postProcess(md: string, api?: any, singleOperationSummary?: string): string {
   let out = md;
   out = stripUnsafeHtmlTags(out);
   out = stripWiddershinsBoilerplate(out);
   out = localizeHeadings(out);
   if (api) out = replaceOperationIdHeadings(out, api);
+  if (singleOperationSummary) {
+    out = collapseRedundantOperationIntro(out, singleOperationSummary);
+  }
   out = escapePipesInTables(out);
+  // Final collapse of any blank-line runs left by other transforms
+  out = out.replace(/\n{3,}/g, '\n\n');
   return out;
 }

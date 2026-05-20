@@ -113,6 +113,32 @@ body`;
     const out = stripWiddershinsBoilerplate(md);
     expect(out).not.toContain('Example responses');
   });
+
+  it('removes operation anchor links', () => {
+    const md = `## opName\n<a id="opIdgetX"></a>\nbody`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('opIdgetX');
+  });
+
+  it('removes empty version-only headings', () => {
+    const md = `# Doc\n\n<h2 id="api"> v1.0.0</h2>\n\nbody`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toMatch(/v1\.0\.0<\/h2>/);
+    expect(out).toContain('body');
+  });
+
+  it('removes tag-level intro heading inside endpoint doc', () => {
+    const md = `<h1 id="api--">基础服务</h1>\n\n## op`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('id="api--"');
+    expect(out).toContain('## op');
+  });
+
+  it('collapses 3+ blank lines to 2', () => {
+    const md = `a\n\n\n\n\nb`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).toBe(`a\n\nb`);
+  });
 });
 
 describe('localizeHeadings', () => {

@@ -118,6 +118,29 @@ export interface EndpointSlice {
  *
  * Used by v1.3 per-endpoint tree mode: each slice → its own wiki node.
  */
+/**
+ * Endpoint slice carries a MINIMAL `info` (no description, no servers, no
+ * securitySchemes). Reason: every leaf doc would otherwise duplicate the full
+ * API preamble (info.description with 字段使用指南, Base URLs, Authentication)
+ * — 167 times for voice-room, drowning the actual operation. We want each
+ * leaf to be ONLY about its one endpoint.
+ */
+function endpointCloneShallow(api: any): any {
+  const fullTitle = api.info?.title ?? '';
+  return {
+    openapi: api.openapi,
+    info: {
+      // Keep version so widdershins doesn't error, but suppress title/description
+      // The lockTitleInMarkdown step will impose our own H1.
+      title: '',
+      version: api.info?.version ?? '1.0.0',
+      description: '',
+      'x-source-api-title': fullTitle, // preserved for debugging
+    },
+    // Intentionally drop: servers, components, security, tags (the preamble blocks)
+  };
+}
+
 export function splitByEndpoint(api: any): EndpointSlice[] {
   const out: EndpointSlice[] = [];
   const paths = (api.paths ?? {}) as Record<string, any>;
@@ -134,7 +157,7 @@ export function splitByEndpoint(api: any): EndpointSlice[] {
         operationId: typeof op?.operationId === 'string' ? op.operationId : undefined,
         summary: typeof op?.summary === 'string' ? op.summary : undefined,
         api: {
-          ...cloneShallow(api),
+          ...endpointCloneShallow(api),
           paths: {
             [pathKey]: {
               [method]: op,
