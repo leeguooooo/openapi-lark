@@ -17,7 +17,7 @@ export interface RenderOutput {
 }
 
 /**
- * Widdershins options tuned for 飞书 docx & size-efficiency:
+ * Widdershins options tuned for 飞书 docx & endpoint-mode legibility:
  *  - language_tabs: only curl (KNOWN_ISSUE #4: multi-lang tabs render as raw blocks)
  *  - omitHeader: we write our own service-prefixed header
  *  - codeSamples: false (saves ~30-40% of output; users see schemas, not duplicated examples)
@@ -25,10 +25,11 @@ export interface RenderOutput {
  *  - tocSummary: false (flat)
  *  - resolve: false — we dereference upstream via swagger-parser
  *  - httpsnippet: false (avoid dependency surprises)
- *  - shallowSchemas: true — collapse deeply-nested types to refs/summaries instead of
- *    fully inlining repetitive enumerations (real-world: voice-room "Enumerated Values"
- *    blocks contributed >50% of bytes + 200+ heading-jump warnings)
- *  - expandBody: false — body schema rendered as a single table, not expanded recursively
+ *  - shallowSchemas: false — must show response Schema fields (a/k/a "Status 200
+ *    showed Inline but the actual field table never rendered" — observed
+ *    2026-05-20). With endpoint-split, doc bloat from full schema expansion
+ *    is bounded to a single operation, no longer a size problem.
+ *  - expandBody: true — same reason; request body should display its schema table.
  */
 const WIDDERSHINS_OPTIONS = {
   language_tabs: [{ curl: 'curl' }],
@@ -37,8 +38,8 @@ const WIDDERSHINS_OPTIONS = {
   resolve: false,
   search: false,
   tocSummary: false,
-  shallowSchemas: true,
-  expandBody: false,
+  shallowSchemas: false,
+  expandBody: true,
   httpsnippet: false,
   user_templates: undefined,
 };
