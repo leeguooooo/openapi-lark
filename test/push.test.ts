@@ -57,11 +57,7 @@ describe('push (with fake lark)', () => {
     }
   });
 
-  it('retries without --json when stderr mentions "unknown flag"', () => {
-    // This tests the retry: --json fails with unknown flag, retry without --json succeeds.
-    // Since our fake reads same env both times, we cannot script different output per call;
-    // we approximate by making it always return unknown-flag (forcing 2nd invocation also fails),
-    // and verify the final classification is non-zero (not timeout, not lark-not-found).
+  it('classifies non-zero exit', () => {
     const result = push({
       docToken: 'doccnX',
       mdPath: '/tmp/x.md',
@@ -69,14 +65,12 @@ describe('push (with fake lark)', () => {
       timeoutMs: 5000,
       env: {
         PATH: pathWith(fakeDir),
-        FAKE_LARK_STDERR: 'Error: unknown flag --json\n',
+        FAKE_LARK_STDERR: 'Error: something broke\n',
         FAKE_LARK_EXIT: '1',
       },
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // After retry the same fake still fails with unknown flag, which means the retry
-      // path returns "non-zero" not "lark-not-found"
       expect(['non-zero', 'unknown']).toContain(result.reason);
     }
   });

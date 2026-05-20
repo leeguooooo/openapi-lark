@@ -34,14 +34,20 @@ export interface PushFailure {
 
 export type PushResult = PushSuccess | PushFailure;
 
-const PUSH_ARGS = [
-  'docs',
-  '+update',
-  '--api-version',
-  'v2',
-  '--format',
-  'markdown',
-];
+/**
+ * Real lark-cli surface (verified against v1.0.32):
+ *   lark-cli docs +update \
+ *     --doc <token-or-url> \
+ *     --markdown @<path-to-md> \
+ *     --api-version v2 \
+ *     --mode replace_all
+ *
+ * Notes:
+ *   - --markdown supports @file syntax to read content from a file
+ *   - --mode replace_all wipes existing content and replaces with the new markdown
+ *   - lark-cli output is JSON-by-default; no --json flag needed
+ */
+const PUSH_BASE_ARGS = ['docs', '+update', '--api-version', 'v2', '--mode', 'replace_all'];
 
 function classifyFailure(stderr: string, status: number | null): PushFailureReason {
   const s = stderr.toLowerCase();
@@ -67,15 +73,21 @@ function classifyFailure(stderr: string, status: number | null): PushFailureReas
  */
 export function push(input: PushInput): PushResult {
   const bin = input.larkBin ?? 'lark-cli';
-  const args = [...PUSH_ARGS, input.docToken, '--file', input.mdPath];
+  const args = [
+    ...PUSH_BASE_ARGS,
+    '--doc',
+    input.docToken,
+    '--markdown',
+    `@${input.mdPath}`,
+  ];
   const spawnOpts = {
     encoding: 'utf8' as const,
     env: input.env ?? process.env,
     timeout: input.timeoutMs,
+    maxBuffer: 64 * 1024 * 1024, // 64MB stdout — needed for very large rendered docs
   };
 
-  // Try --json first
-  let res = spawnSync(bin, [...args, '--json'], spawnOpts);
+  const res = spawnSync(bin, args, spawnOpts);
 
   if (res.error && (res.error as NodeJS.ErrnoException).code === 'ENOENT') {
     return {
@@ -97,23 +109,6 @@ export function push(input: PushInput): PushResult {
       message: `push timed out after ${input.timeoutMs}ms`,
       raw: res.stdout || res.stderr || '',
     };
-  }
-
-  // Fallback if --json is unsupported
-  const stderr1 = res.stderr || '';
-  if (res.status !== 0 && /unknown\s+(flag|option)|invalid\s+flag/i.test(stderr1)) {
-    res = spawnSync(bin, args, spawnOpts);
-    if (
-      res.signal === 'SIGTERM' ||
-      (res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT'
-    ) {
-      return {
-        ok: false,
-        reason: 'timeout',
-        message: `push timed out after ${input.timeoutMs}ms`,
-        raw: res.stdout || res.stderr || '',
-      };
-    }
   }
 
   const stdout = res.stdout || '';
