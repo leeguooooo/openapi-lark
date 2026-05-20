@@ -1,0 +1,58 @@
+openapi: 3.0.3
+info:
+  title: Nested Schema Test
+  version: 1.0.0
+paths:
+  /users:
+    post:
+      summary: Create user with nested profile
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, profile]
+      properties:
+        id:
+          type: string
+        nickname:
+          type: string
+          nullable: true
+        profile:
+          $ref: '#/components/schemas/Profile'
+        tags:
+          type: array
+          items:
+            type: string
+    Profile:
+      type: object
+      properties:
+        bio:
+          type: string
+          nullable: true
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+    Address:
+      type: object
+      properties:
+        line1:
+          type: string
+        city:
+          type: string
+        country:
+          type: string

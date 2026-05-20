@@ -1,0 +1,50 @@
+{
+  "name": "openapi-lark",
+  "version": "0.1.0",
+  "description": "OpenAPI → 飞书 docx 文档同步工具。Lark-native API platform 的第一块拼图。",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "openapi-lark": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "SKILL.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@apidevtools/swagger-parser": "^10.1.0",
+    "commander": "^12.1.0",
+    "p-limit": "^6.1.0",
+    "remark-parse": "^11.0.0",
+    "semver": "^7.6.3",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0",
+    "widdershins": "^4.0.1",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/semver": "^7.5.8",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leeguooooo/openapi-lark.git"
+  }
+}

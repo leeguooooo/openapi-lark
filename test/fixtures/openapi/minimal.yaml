@@ -1,0 +1,44 @@
+openapi: 3.0.3
+info:
+  title: Minimal Test API
+  version: 1.0.0
+  description: 最小测试样本
+paths:
+  /ping:
+    get:
+      summary: Ping
+      operationId: ping
+      responses:
+        '200':
+          description: pong
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+  /echo:
+    post:
+      summary: Echo
+      operationId: echo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [msg]
+              properties:
+                msg:
+                  type: string
+      responses:
+        '200':
+          description: echoed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  msg:
+                    type: string
