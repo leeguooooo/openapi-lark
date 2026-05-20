@@ -39,19 +39,31 @@ export interface PushFailure {
 export type PushResult = PushSuccess | PushFailure;
 
 /**
- * Real lark-cli surface (verified against v1.0.32):
+ * Real lark-cli v2 surface (verified against lark-cli 1.0.32 + lark-doc skill):
  *   lark-cli docs +update \
- *     --doc <token-or-url> \
- *     --markdown @<path-to-md> \
  *     --api-version v2 \
- *     --mode replace_all
+ *     --doc <token-or-url> \
+ *     --command overwrite \
+ *     --doc-format markdown \
+ *     --content @<relative-path-to-md>
  *
  * Notes:
- *   - --markdown supports @file syntax to read content from a file
- *   - --mode replace_all wipes existing content and replaces with the new markdown
- *   - lark-cli output is JSON-by-default; no --json flag needed
+ *   - --command overwrite clears the doc and rewrites content (per lark-doc reference:
+ *     "⚠️ 清空文档后全文重写（可能丢失图片、评论）" — matches our 文档所有权 contract)
+ *   - --content supports @file syntax; path must be RELATIVE to spawn cwd
+ *   - --doc-format markdown is required (default is xml)
+ *   - lark-cli output is JSON by default; no --json flag exists
  */
-const PUSH_BASE_ARGS = ['docs', '+update', '--api-version', 'v2', '--mode', 'replace_all'];
+const PUSH_BASE_ARGS = [
+  'docs',
+  '+update',
+  '--api-version',
+  'v2',
+  '--command',
+  'overwrite',
+  '--doc-format',
+  'markdown',
+];
 
 function classifyFailure(stderr: string, status: number | null): PushFailureReason {
   const s = stderr.toLowerCase();
@@ -81,7 +93,7 @@ export function push(input: PushInput): PushResult {
     ...PUSH_BASE_ARGS,
     '--doc',
     input.docToken,
-    '--markdown',
+    '--content',
     `@${input.mdPath}`,
   ];
   const spawnOpts = {
