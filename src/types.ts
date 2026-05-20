@@ -13,6 +13,11 @@ export interface ServiceConfig {
   includeTags?: string[];
   /** Skip these tags */
   excludeTags?: string[];
+  /** In tree/endpoint mode, force the parent wiki node title to this value.
+   *  Defaults to the existing wiki node title (preserves it). Useful when the
+   *  parent title was previously clobbered (e.g. by an earlier widdershins
+   *  push to "Authentication") and you want to repair it. */
+  parentTitle?: string;
   render?: {
     engine: 'widdershins' | 'native';
   };

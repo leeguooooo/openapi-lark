@@ -90,9 +90,9 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
   );
 
   // Step 3: render + push overview to the parent docx.
-  // newTitle: keep whatever the user already set on the parent wiki node.
-  // We deliberately do NOT change parent title here.
+  // Title precedence: svc.parentTitle (explicit) > existing parent title > svc.name
   mkdirSync(resolve(ctx.basedir, ctx.outDirRel), { recursive: true });
+  const parentLockTitle = svc.parentTitle || parent.title || svc.name;
   results.push(
     await renderAndPush({
       ctx,
@@ -100,7 +100,7 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
       api: split.overview,
       docToken: parent.objToken,
       outRel: `${ctx.outDirRel}/_overview.md`,
-      newTitle: parent.title, // preserve the existing parent title
+      newTitle: parentLockTitle,
     }),
   );
 

@@ -106,6 +106,8 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   mkdirSync(resolve(ctx.basedir, ctx.outDirRel), { recursive: true });
 
   // Step A: push overview to parent docx
+  // Title precedence: svc.parentTitle (explicit override) > existing parent title > svc.name
+  const parentLockTitle = svc.parentTitle || parent.title || svc.name;
   results.push(
     await renderAndPush({
       ctx,
@@ -113,7 +115,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       api: tagSplit.overview,
       docToken: parent.objToken,
       outRel: `${ctx.outDirRel}/_overview.md`,
-      titleForLock: parent.title || svc.name,
+      titleForLock: parentLockTitle,
     }),
   );
 

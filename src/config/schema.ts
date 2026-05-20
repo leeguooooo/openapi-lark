@@ -20,6 +20,7 @@ export const ServiceSchema = z.object({
   tagAliases: z.record(z.string()).optional(),
   includeTags: z.array(z.string()).optional(),
   excludeTags: z.array(z.string()).optional(),
+  parentTitle: z.string().min(1).optional(),
   render: RenderSchema.optional(),
 });
 
