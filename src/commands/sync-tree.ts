@@ -207,7 +207,7 @@ interface RenderAndPushArgs {
 }
 
 async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
-  const { ctx, label, api, docToken, outRel } = args;
+  const { ctx, label, api, docToken, outRel, newTitle } = args;
   const started = Date.now();
   let markdown: string;
   let warnings;
@@ -222,6 +222,15 @@ async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
       durationMs: Date.now() - started,
       reason: `render failed: ${(err as Error).message}`,
     };
+  }
+
+  // Real-world calibration: lark-cli docs +update --command overwrite IGNORES
+  // --new-title and steals the docx title from the FIRST `# H1` in the markdown
+  // body (often "Authentication" from widdershins' auto-generated section).
+  // Workaround: strip widdershins front-matter and prepend `# <newTitle>` as
+  // the absolute first H1 so lark-cli locks onto our intended title.
+  if (newTitle) {
+    markdown = lockTitleInMarkdown(markdown, newTitle);
   }
 
   const grouped = groupHeadingWarnings(warnings);
@@ -253,7 +262,9 @@ async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
-    newTitle: args.newTitle,
+    // We don't pass newTitle to push — lark-cli --new-title is unreliable
+    // (verified 2026-05-20 with v1.0.32). Title is now locked via in-markdown
+    // injection in lockTitleInMarkdown above.
   });
   if (pushed.ok) {
     return {
@@ -277,4 +288,20 @@ function safeFilename(s: string): string {
   // Without CJK preservation, voice-room tags 语音房/管理端/... all collapse to "_"
   // and the per-tag .md files overwrite each other.
   return s.replace(/[^a-zA-Z0-9._\-一-鿿]+/g, '_').slice(0, 80);
+}
+
+/**
+ * Strip widdershins YAML front-matter and prepend our own `# <title>` as the
+ * absolute first H1. Forces lark-cli `docs +update --command overwrite` to use
+ * `<title>` as the docx + wiki node title.
+ */
+export function lockTitleInMarkdown(md: string, title: string): string {
+  let body = md;
+  if (body.startsWith('---')) {
+    const closeIdx = body.indexOf('\n---', 3);
+    if (closeIdx > 0) {
+      body = body.slice(closeIdx + 4).replace(/^\n+/, '');
+    }
+  }
+  return `# ${title}\n\n${body}`;
 }
