@@ -25,6 +25,28 @@ export class WikiError extends Error {
   }
 }
 
+function looksLikeLockContention(body: string): boolean {
+  return (
+    body.includes('131009') ||
+    body.toLowerCase().includes('lock contention')
+  );
+}
+
+function sleepSync(ms: number): void {
+  // Synchronous sleep for retry backoff. Avoids requiring caller to be async.
+  const until = Date.now() + ms;
+  // eslint-disable-next-line no-empty
+  const spawnSync = require('node:child_process').spawnSync;
+  // Use shell sleep for accurate ms-level wait without busy-loop
+  spawnSync('sleep', [(ms / 1000).toFixed(3)], { stdio: 'ignore', timeout: ms + 5000 });
+  // Guard in case sleep is unavailable (Windows): fall back to small busy-wait spike
+  if (Date.now() < until) {
+    while (Date.now() < until) {
+      /* busy wait short tail */
+    }
+  }
+}
+
 function runLark(
   bin: string,
   args: string[],
@@ -143,38 +165,58 @@ export function createWikiChild(
   larkBin = 'lark-cli',
   env?: NodeJS.ProcessEnv,
 ): WikiChild {
-  const r = runLark(
-    larkBin,
-    [
-      'wiki',
-      '+node-create',
-      '--space-id',
-      spaceId,
-      '--parent-node-token',
-      parentNodeToken,
-      '--title',
-      title,
-      '--obj-type',
-      'docx',
-      '--node-type',
-      'origin',
-    ],
-    env,
-    60_000,
-  );
-  if (!r.ok) {
-    throw new WikiError(`wiki +node-create "${title}" failed: ${r.stderr || r.stdout}`);
+  // Lark wiki has server-side lock contention when creating many children under
+  // the same parent in quick succession (error 131009). Auto-retry a few times
+  // with exponential backoff.
+  const args = [
+    'wiki',
+    '+node-create',
+    '--space-id',
+    spaceId,
+    '--parent-node-token',
+    parentNodeToken,
+    '--title',
+    title,
+    '--obj-type',
+    'docx',
+    '--node-type',
+    'origin',
+  ];
+  const MAX_RETRIES = 4;
+  let r;
+  let lastBody = '';
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    r = runLark(larkBin, args, env, 60_000);
+    lastBody = r.stdout || r.stderr;
+    if (r.ok && !looksLikeLockContention(lastBody)) break;
+    // Inspect JSON body to detect server-side errors that succeeded at CLI level
+    if (r.ok) {
+      try {
+        const j = JSON.parse(r.stdout);
+        if (j && j.ok !== false) break; // genuine success
+      } catch {
+        break;
+      }
+    }
+    if (!looksLikeLockContention(lastBody) || attempt === MAX_RETRIES) break;
+    const delayMs = 250 * Math.pow(2, attempt); // 250 / 500 / 1000 / 2000 / 4000
+    sleepSync(delayMs);
+  }
+  if (!r!.ok || looksLikeLockContention(lastBody)) {
+    throw new WikiError(
+      `wiki +node-create "${title}" failed after retries: ${lastBody.slice(0, 300)}`,
+    );
   }
   let parsed: any;
   try {
-    parsed = JSON.parse(r.stdout);
+    parsed = JSON.parse(r!.stdout);
   } catch (err) {
     throw new WikiError(`wiki +node-create returned non-JSON: ${(err as Error).message}`);
   }
   // Real shape (lark-cli 1.0.32): { data: { node_token, obj_token, ... } } — flat under data
   const node = parsed?.data?.node ?? parsed?.data ?? parsed?.node ?? parsed;
   if (!node?.node_token || !node?.obj_token) {
-    throw new WikiError(`wiki +node-create response missing tokens: ${r.stdout.slice(0, 200)}`);
+    throw new WikiError(`wiki +node-create response missing tokens: ${r!.stdout.slice(0, 200)}`);
   }
   return {
     nodeToken: node.node_token,
