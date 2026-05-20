@@ -155,11 +155,17 @@ export function splitByEndpoint(api: any): EndpointSlice[] {
 
 /**
  * Generate a display title for one endpoint slice.
- * Default format: "<METHOD> <path>"; uses summary when present and short.
+ *
+ * Preferred format: "<summary> — <METHOD> <path>"
+ * When summary is absent or excessively long, fall back to "<METHOD> <path>".
+ *
+ * Rationale: human language goes first so users scanning a flat list of
+ * wiki nodes (especially in Chinese-only context) recognize endpoints by
+ * intent, not by URL pattern. Method/path becomes a disambiguation suffix.
  */
 export function titleForEndpoint(slice: EndpointSlice): string {
   if (slice.summary && slice.summary.length <= 40) {
-    return `${slice.method} ${slice.path} — ${slice.summary}`;
+    return `${slice.summary} — ${slice.method} ${slice.path}`;
   }
   return `${slice.method} ${slice.path}`;
 }

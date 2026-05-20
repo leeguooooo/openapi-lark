@@ -136,7 +136,7 @@ describe('titleForEndpoint', () => {
     ).toBe('GET /rooms');
   });
 
-  it('appends summary if short', () => {
+  it('prepends short summary (Chinese-first order)', () => {
     expect(
       titleForEndpoint({
         tagId: 'room',
@@ -145,7 +145,7 @@ describe('titleForEndpoint', () => {
         summary: 'Create room',
         api: {},
       }),
-    ).toBe('POST /rooms — Create room');
+    ).toBe('Create room — POST /rooms');
   });
 
   it('drops summary if too long', () => {

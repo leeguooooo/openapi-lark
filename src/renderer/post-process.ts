@@ -148,11 +148,105 @@ export function stripUnsafeHtmlTags(md: string): string {
 }
 
 /**
- * Run all post-processors in a defined order.
+ * Strip widdershins-emitted boilerplate that is meaningless once we've turned
+ * off code samples / multi-language tabs.
  */
-export function postProcess(md: string): string {
+export function stripWiddershinsBoilerplate(md: string): string {
+  let out = md;
+  // Lead-in blockquote ("Scroll down for code samples..."): widdershins emits
+  // it twice per operation (once near top, once before each response example).
+  out = out.replace(
+    /^\s*>\s*Scroll down for code samples, example requests and responses\..*$/gm,
+    '',
+  );
+  // Generator comment
+  out = out.replace(/<!--\s*Generator:\s*Widdershins[^>]*-->/g, '');
+  // Empty "Example responses" / "200 Response" callouts that precede schema-only
+  // sections become noise without examples
+  out = out.replace(/^\s*>\s*Example responses\s*$/gm, '');
+  return out;
+}
+
+/**
+ * Translate widdershins-emitted English section headings + table headers to
+ * Chinese. Limited to widdershins' standard vocabulary so we don't accidentally
+ * mangle user-authored content that happens to use the same words.
+ */
+export function localizeHeadings(md: string): string {
+  let out = md;
+  // ## / ### section headings (line-start only)
+  const headingMap: Array<[RegExp, string]> = [
+    [/^(#{2,6}) Parameters\s*$/gm, '$1 参数'],
+    [/^(#{2,6}) Body parameter\s*$/gm, '$1 请求体示例'],
+    [/^(#{2,6}) Responses\s*$/gm, '$1 响应'],
+    [/^(#{2,6}) Response Schema\s*$/gm, '$1 响应 Schema'],
+    [/^(#{2,6}) Response Headers\s*$/gm, '$1 响应头'],
+    [/^(#{2,6}) Enumerated Values\s*$/gm, '$1 枚举值'],
+    [/^(#{2,6}) Detailed descriptions\s*$/gm, '$1 详细说明'],
+    [/^(#{2,6}) Authentication\s*$/gm, '$1 鉴权'],
+    [/^(#{2,6}) Properties\s*$/gm, '$1 字段'],
+    [/^(#{2,6}) Schemas\s*$/gm, '$1 Schema 定义'],
+  ];
+  for (const [re, repl] of headingMap) {
+    out = out.replace(re, repl);
+  }
+  // Table headers that widdershins always emits (Name | Type | Required | ... )
+  // Only rewrite when the four-column "Parameters" or "Properties" pattern is
+  // recognized — avoids touching user content.
+  out = out.replace(
+    /\|\s*Name\s*\|\s*In\s*\|\s*Type\s*\|\s*Required\s*\|\s*Description\s*\|/g,
+    '| 名称 | 位置 | 类型 | 必填 | 描述 |',
+  );
+  out = out.replace(
+    /\|\s*Name\s*\|\s*Type\s*\|\s*Required\s*\|\s*Restrictions\s*\|\s*Description\s*\|/g,
+    '| 名称 | 类型 | 必填 | 约束 | 描述 |',
+  );
+  out = out.replace(
+    /\|\s*Status\s*\|\s*Meaning\s*\|\s*Description\s*\|\s*Schema\s*\|/g,
+    '| 状态码 | 含义 | 描述 | Schema |',
+  );
+  return out;
+}
+
+/**
+ * Replace `## <operationId>` headings with `## <summary>` for operations whose
+ * summary is set. Widdershins uses operationId as the per-operation H2 by
+ * default — opaque to Chinese readers.
+ */
+export function replaceOperationIdHeadings(md: string, api: any): string {
+  const map: Record<string, string> = {};
+  const paths = (api?.paths ?? {}) as Record<string, any>;
+  for (const pathItem of Object.values(paths)) {
+    if (!pathItem || typeof pathItem !== 'object') continue;
+    for (const op of Object.values(pathItem as Record<string, any>)) {
+      if (
+        op &&
+        typeof op === 'object' &&
+        typeof (op as any).operationId === 'string' &&
+        typeof (op as any).summary === 'string' &&
+        (op as any).summary.trim()
+      ) {
+        map[(op as any).operationId] = (op as any).summary.trim();
+      }
+    }
+  }
+  if (Object.keys(map).length === 0) return md;
+  return md.replace(/^(#{1,6})\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/gm, (full, hashes, ident) => {
+    if (map[ident]) return `${hashes} ${map[ident]}`;
+    return full;
+  });
+}
+
+/**
+ * Run all post-processors in a defined order. `api` is optional; supply it to
+ * enable operationId→summary heading replacement.
+ */
+export function postProcess(md: string, api?: any): string {
   let out = md;
   out = stripUnsafeHtmlTags(out);
+  out = stripWiddershinsBoilerplate(out);
+  out = localizeHeadings(out);
+  if (api) out = replaceOperationIdHeadings(out, api);
   out = escapePipesInTables(out);
   return out;
 }

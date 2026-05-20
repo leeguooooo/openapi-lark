@@ -3,6 +3,9 @@ import {
   escapePipesInTables,
   stripUnsafeHtmlTags,
   postProcess,
+  stripWiddershinsBoilerplate,
+  localizeHeadings,
+  replaceOperationIdHeadings,
 } from '../src/renderer/post-process.js';
 
 describe('escapePipesInTables', () => {
@@ -84,5 +87,123 @@ describe('postProcess', () => {
     const out = postProcess(md);
     expect(out).not.toContain('<br>');
     expect(out).toContain('| a    | x\\|y  |');
+  });
+});
+
+describe('stripWiddershinsBoilerplate', () => {
+  it('removes "Scroll down for code samples" intro', () => {
+    const md = `# API
+
+> Scroll down for code samples, example requests and responses. Select a language from the tabs above.
+
+body`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('Scroll down for code samples');
+    expect(out).toContain('body');
+  });
+
+  it('removes generator comment', () => {
+    const md = `<!-- Generator: Widdershins v4.0.1 -->\n\n# h`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('Widdershins');
+  });
+
+  it('removes "Example responses" blockquote', () => {
+    const md = `## Responses\n\n> Example responses\n\n> 200 Response`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('Example responses');
+  });
+});
+
+describe('localizeHeadings', () => {
+  it('translates standard section headings', () => {
+    const md = `## Parameters
+### Responses
+### Response Schema
+### Enumerated Values
+## Authentication
+### Detailed descriptions`;
+    const out = localizeHeadings(md);
+    expect(out).toContain('## 参数');
+    expect(out).toContain('### 响应');
+    expect(out).toContain('### 响应 Schema');
+    expect(out).toContain('### 枚举值');
+    expect(out).toContain('## 鉴权');
+    expect(out).toContain('### 详细说明');
+    expect(out).not.toMatch(/^## Parameters$/m);
+  });
+
+  it('translates standard table headers', () => {
+    const md = `| Name | In | Type | Required | Description |
+|------|----|------|----------|-------------|
+| x    | q  | str  | true     | x desc      |`;
+    const out = localizeHeadings(md);
+    expect(out).toContain('| 名称 | 位置 | 类型 | 必填 | 描述 |');
+  });
+
+  it('translates status/meaning/schema header', () => {
+    const md = `| Status | Meaning | Description | Schema |
+|--------|---------|-------------|--------|
+| 200    | OK      | ok          | Inline |`;
+    const out = localizeHeadings(md);
+    expect(out).toContain('| 状态码 | 含义 | 描述 | Schema |');
+  });
+
+  it('does not touch user content matching same words elsewhere', () => {
+    // "Parameters: X" in prose should NOT become "参数: X"; we only translate
+    // line-start heading patterns
+    const md = `Some text discussing Parameters and Responses inline.`;
+    const out = localizeHeadings(md);
+    expect(out).toContain('Parameters and Responses');
+  });
+});
+
+describe('replaceOperationIdHeadings', () => {
+  it('replaces ## <operationId> with ## <summary>', () => {
+    const md = `## getOpenAPISpec\n\nbody\n\n## getRoomConfig\n\nbody2`;
+    const api = {
+      paths: {
+        '/x': {
+          get: { operationId: 'getOpenAPISpec', summary: '获取OpenAPI规范' },
+        },
+        '/y': {
+          get: { operationId: 'getRoomConfig', summary: '获取房间配置' },
+        },
+      },
+    };
+    const out = replaceOperationIdHeadings(md, api);
+    expect(out).toContain('## 获取OpenAPI规范');
+    expect(out).toContain('## 获取房间配置');
+    expect(out).not.toContain('## getOpenAPISpec');
+  });
+
+  it('leaves operationId headings without summary intact', () => {
+    const md = `## someId\nbody`;
+    const api = {
+      paths: { '/x': { get: { operationId: 'someId' } } },
+    };
+    const out = replaceOperationIdHeadings(md, api);
+    expect(out).toContain('## someId');
+  });
+
+  it('does not touch unrelated headings', () => {
+    const md = `## 已经是中文\n## Schemas`;
+    const api = { paths: {} };
+    const out = replaceOperationIdHeadings(md, api);
+    expect(out).toContain('## 已经是中文');
+    expect(out).toContain('## Schemas');
+  });
+});
+
+describe('post-process integration with api', () => {
+  it('replaces operationIds when api is passed', () => {
+    const md = `## getX\n\n> Scroll down for code samples, example requests and responses.\n\n### Parameters`;
+    const api = {
+      paths: { '/x': { get: { operationId: 'getX', summary: '获取 X' } } },
+    };
+    const out = postProcess(md, api);
+    expect(out).toContain('## 获取 X');
+    expect(out).toContain('### 参数');
+    expect(out).not.toContain('Scroll down');
   });
 });

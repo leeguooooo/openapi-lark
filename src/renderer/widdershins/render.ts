@@ -64,7 +64,7 @@ export async function renderWiddershins(input: RenderInput): Promise<RenderOutpu
     }
   });
 
-  const md = postProcess(raw);
+  const md = postProcess(raw, input.api);
   const headingWarnings = detectHeadingJumps(md);
   return { markdown: md, headingWarnings };
 }
