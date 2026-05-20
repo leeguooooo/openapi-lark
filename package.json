@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "prepare": "tsc || true",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
