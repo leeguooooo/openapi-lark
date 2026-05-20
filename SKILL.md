@@ -164,6 +164,52 @@ services:
 - **跨仓库共用 docToken 池**：用 `extends: ./shared/lark-docs.yaml` 引用同一份基础配置；子配置只覆盖差异
 - **多环境（dev / staging / prod）**：docToken 用 `${LARK_DOC_VOICE_ROOM_PROD}` 之类的 env 引用；CI 注入不同环境的 token
 
+## 搜索 / 查接口（跨项目）
+
+当 agent 在另一个项目里被问「voice-room 创建房间接口长啥样」「查一下 POST /api/xxx 的参数」时，**不要新装搜索工具**——直接用 lark-cli 搜飞书 wiki，配合本 skill 的命名规律就行。
+
+**命名规律（openapi-lark 同步出的 wiki 节点）：**
+
+| wiki 节点层级 | 标题格式 | 例子 |
+|---|---|---|
+| 项目根 | `<parentTitle>` 或服务名 | `语音房` |
+| tag 中间节点 | `<tagAliases[tag]>` 或 tag id | `语音房接口` |
+| path-prefix 子组（≥8 接口时自动产生） | 第一段路径名 | `voice-room` / `tags` / `badges` |
+| **接口叶子** | **`<summary> — <METHOD> <path>`** | `创建语音房间 — POST /api/voice-room/create` |
+
+agent 看到标题里有 ` — METHOD ` 就知道这是个接口叶子，不是组。
+
+**典型搜索套路：**
+
+```bash
+# 按业务关键词搜（最常用）
+lark-cli drive +search --query "创建房间" --type docx
+# 结果里 title 含 ` — POST ` / ` — GET ` 的就是接口叶子
+# 拿 obj_token 后：
+lark-cli docs +fetch --api-version v2 --doc <obj_token> --scope outline
+# 即可读到该接口完整文档（参数表、响应表、JSON 示例）
+
+# 按方法+路径搜
+lark-cli drive +search --query "POST /api/voice-room/create" --type docx
+
+# 列出某项目所有接口（先拿父节点 token，再列子节点递归）
+lark-cli wiki +node-list --space-id <X> --parent-node-token <project parent> --page-all
+# 再对每个 tag 中间节点递归列子节点 → 拿到所有接口标题
+```
+
+**agent 的最佳实践（写进对话脚本里）：**
+
+1. 用户问「X 接口长啥样」→ `lark-cli drive +search --query "X" --type docx`
+2. 结果过滤：保留 title 匹配 ` — (GET|POST|PUT|DELETE|PATCH) ` 的条目
+3. 没命中：换关键词；命中 1 条：直接 `docs +fetch` 展开
+4. 命中多条：让用户选，或显示 title + path
+
+**为什么这套行得通：**
+- title 锁定（lockTitleInMarkdown）保证每个 docx 标题都是 `<summary> — <METHOD> <path>`
+- 一行就能眼判是不是接口
+- summary 是中文 → 自然语言搜索能命中
+- METHOD + path 是英文 → 精确技术搜索也能命中
+
 ## 鉴权 scope
 
 `lark-cli auth login` 默认 scope 够用于基础读写。但下列操作需要额外 scope：
