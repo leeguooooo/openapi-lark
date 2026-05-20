@@ -2,6 +2,7 @@
 import * as widdershins from 'widdershins';
 import { postProcess } from '../post-process.js';
 import { detectHeadingJumps, type HeadingWarning } from '../heading-check.js';
+import { exampleForOperation } from '../example-from-schema.js';
 
 export interface RenderInput {
   /** Dereferenced OpenAPI object */
@@ -68,7 +69,37 @@ export async function renderWiddershins(input: RenderInput): Promise<RenderOutpu
     }
   });
 
-  const md = postProcess(raw, input.api, input.singleOperationSummary);
+  let md = postProcess(raw, input.api, input.singleOperationSummary);
+  // For single-operation slices (endpoint mode), append a real "响应示例" block
+  // synthesized from the schema. Widdershins' own example dump is broken for
+  // allOf schemas; we already strip it in post-process. This replacement is
+  // accurate (uses op.responses schema after allOf-flatten).
+  if (input.singleOperationSummary) {
+    md = appendResponseExample(md, input.api);
+  }
   const headingWarnings = detectHeadingJumps(md);
   return { markdown: md, headingWarnings };
+}
+
+function appendResponseExample(md: string, api: any): string {
+  const paths = api?.paths;
+  if (!paths || typeof paths !== 'object') return md;
+  // Single-op slice: exactly one (path, method) under api.paths
+  for (const pathItem of Object.values(paths as Record<string, any>)) {
+    if (!pathItem || typeof pathItem !== 'object') continue;
+    for (const op of Object.values(pathItem as Record<string, any>)) {
+      if (!op || typeof op !== 'object') continue;
+      if (!('responses' in op)) continue;
+      const ex = exampleForOperation(op);
+      if (!ex) return md;
+      const json = JSON.stringify(ex.example, null, 2);
+      const block =
+        `\n\n### 响应示例 (${ex.status})\n\n` +
+        '```json\n' +
+        json +
+        '\n```\n';
+      return md.trimEnd() + block;
+    }
+  }
+  return md;
 }
