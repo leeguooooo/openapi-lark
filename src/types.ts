@@ -3,9 +3,10 @@ export interface ServiceConfig {
   openapi: string;
   docToken: string;
   /** 'single' (default): overwrite docToken's docx with full rendered output.
-   *  'tree': treat docToken as a wiki node; group endpoints by first tag, push
-   *  the overview to the parent docx, and create/update child wiki nodes per tag. */
-  mode?: 'single' | 'tree';
+   *  'tree': 2-level — parent docx + child wiki node per tag.
+   *  'endpoint': 3-level — parent docx + per-tag intermediate + leaf per
+   *  single (path, method). Smallest unit per spec (user directive 2026-05-20). */
+  mode?: 'single' | 'tree' | 'endpoint';
   /** Map tag id → display title for child node names */
   tagAliases?: Record<string, string>;
   /** Only sync these tags (default: all tags found in openapi) */

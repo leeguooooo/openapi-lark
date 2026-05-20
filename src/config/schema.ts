@@ -16,7 +16,7 @@ export const ServiceSchema = z.object({
   name: z.string().min(1, 'service.name is required'),
   openapi: z.string().min(1, 'service.openapi is required'),
   docToken: z.string().min(1, 'service.docToken is required (cannot be empty)'),
-  mode: z.enum(['single', 'tree']).default('single'),
+  mode: z.enum(['single', 'tree', 'endpoint']).default('single'),
   tagAliases: z.record(z.string()).optional(),
   includeTags: z.array(z.string()).optional(),
   excludeTags: z.array(z.string()).optional(),

@@ -5,6 +5,7 @@ import { loadConfig, resolveOpenapiPath, ConfigError } from '../config/load.js';
 import { render, RenderError } from '../renderer/index.js';
 import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { runTreeSync } from './sync-tree.js';
+import { runEndpointSync } from './sync-endpoint.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
 import { push } from '../lark/push.js';
 import {
@@ -88,6 +89,56 @@ export async function runSync(args: SyncArgs): Promise<number> {
         const started = Date.now();
         const engine: Engine = args.engine ?? svc.render?.engine ?? 'widdershins';
         const openapiPath = resolveOpenapiPath(loaded.basedir, svc.openapi);
+
+        // Endpoint mode: 3-level tree, leaf = single (path, method)
+        if (svc.mode === 'endpoint') {
+          if (args.dryRun) {
+            process.stdout.write(
+              `[sync] ${svc.name}: endpoint mode dry-run — rendering all leaves to disk only\n`,
+            );
+          }
+          try {
+            const epResults = await runEndpointSync({
+              config: loaded.config,
+              basedir: loaded.basedir,
+              service: svc,
+              outDirRel: `.openapi-lark/${svc.name}`,
+              parallel,
+              timeoutMs,
+              pushBytesLimit: loaded.config.maxPushBytes,
+            });
+            const failed = epResults.filter((r) => r.status === 'failed').length;
+            const oks = epResults.filter((r) => r.status === 'ok').length;
+            const warns = epResults.filter((r) => r.status === 'warning').length;
+            results[idx] = {
+              service: svc.name,
+              status: failed > 0 ? 'failed' : warns > 0 ? 'warning' : 'ok',
+              durationMs: Date.now() - started,
+              reason: `endpoint: ${oks} ok / ${failed} failed / ${warns} warning across ${epResults.length} parts`,
+            };
+            for (const r of epResults) {
+              const sym =
+                r.status === 'ok'
+                  ? '✓'
+                  : r.status === 'failed'
+                    ? '✗'
+                    : r.status === 'warning'
+                      ? '⚠'
+                      : '·';
+              process.stdout.write(
+                `[sync]   ${sym} ${r.service} ${r.docUrl ?? r.reason ?? ''} (${(r.durationMs / 1000).toFixed(1)}s)\n`,
+              );
+            }
+          } catch (err) {
+            results[idx] = {
+              service: svc.name,
+              status: 'failed',
+              durationMs: Date.now() - started,
+              reason: `endpoint sync error: ${(err as Error).message}`,
+            };
+          }
+          return;
+        }
 
         // Tree mode: split by tag, render each, push to child wiki nodes
         if (svc.mode === 'tree') {

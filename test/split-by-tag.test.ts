@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { splitByTag, titleForTag } from '../src/renderer/split-by-tag.js';
+import {
+  splitByTag,
+  titleForTag,
+  splitByEndpoint,
+  titleForEndpoint,
+} from '../src/renderer/split-by-tag.js';
 
 describe('splitByTag', () => {
   const api = {
@@ -71,5 +76,88 @@ describe('titleForTag', () => {
   });
   it('falls back to id for unknown tag', () => {
     expect(titleForTag('unknown', api)).toBe('unknown');
+  });
+});
+
+describe('splitByEndpoint', () => {
+  const api = {
+    openapi: '3.0.3',
+    info: { title: 'T', version: '1.0.0' },
+    paths: {
+      '/rooms': {
+        get: { tags: ['room'], operationId: 'listRooms', summary: 'List rooms', responses: {} },
+        post: { tags: ['room'], operationId: 'createRoom', responses: {} },
+      },
+      '/health': {
+        get: { operationId: 'health', responses: {} },
+      },
+    },
+  };
+
+  it('one slice per (path, method)', () => {
+    const slices = splitByEndpoint(api);
+    expect(slices).toHaveLength(3);
+    expect(slices.map((s) => `${s.method} ${s.path}`).sort()).toEqual([
+      'GET /health',
+      'GET /rooms',
+      'POST /rooms',
+    ]);
+  });
+
+  it('preserves tagId per slice', () => {
+    const slices = splitByEndpoint(api);
+    expect(slices.find((s) => s.path === '/rooms' && s.method === 'GET')?.tagId).toBe('room');
+    expect(slices.find((s) => s.path === '/health')?.tagId).toBe('untagged');
+  });
+
+  it('each slice api.paths contains exactly one path with one method', () => {
+    const slices = splitByEndpoint(api);
+    for (const s of slices) {
+      const paths = Object.keys(s.api.paths);
+      expect(paths).toHaveLength(1);
+      expect(paths[0]).toBe(s.path);
+      const methods = Object.keys(s.api.paths[s.path]).filter((k) =>
+        ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'].includes(k),
+      );
+      expect(methods).toHaveLength(1);
+    }
+  });
+});
+
+describe('titleForEndpoint', () => {
+  it('uses METHOD path when no short summary', () => {
+    expect(
+      titleForEndpoint({
+        tagId: 'room',
+        method: 'GET',
+        path: '/rooms',
+        api: {},
+      }),
+    ).toBe('GET /rooms');
+  });
+
+  it('appends summary if short', () => {
+    expect(
+      titleForEndpoint({
+        tagId: 'room',
+        method: 'POST',
+        path: '/rooms',
+        summary: 'Create room',
+        api: {},
+      }),
+    ).toBe('POST /rooms — Create room');
+  });
+
+  it('drops summary if too long', () => {
+    const longSummary = 'x'.repeat(50);
+    expect(
+      titleForEndpoint({
+        tagId: 'room',
+        method: 'GET',
+        path: '/rooms',
+        summary: longSummary,
+        api: {},
+      }),
+    ).toBe('GET /rooms');
   });
 });

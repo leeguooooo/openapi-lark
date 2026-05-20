@@ -100,3 +100,66 @@ export function titleForTag(
   }
   return tagId;
 }
+
+export interface EndpointSlice {
+  tagId: string;
+  method: string;
+  path: string;
+  operationId?: string;
+  summary?: string;
+  /** Sub-api containing only this one operation (everything else trimmed) */
+  api: any;
+}
+
+/**
+ * Split into one slice per (path, method) operation. Each slice carries the
+ * full openapi metadata (info/servers/components/security) but `paths` contains
+ * exactly one path with one method.
+ *
+ * Used by v1.3 per-endpoint tree mode: each slice → its own wiki node.
+ */
+export function splitByEndpoint(api: any): EndpointSlice[] {
+  const out: EndpointSlice[] = [];
+  const paths = (api.paths ?? {}) as Record<string, any>;
+  for (const [pathKey, pathItem] of Object.entries(paths)) {
+    if (!pathItem || typeof pathItem !== 'object') continue;
+    for (const [method, op] of Object.entries(pathItem as Record<string, any>)) {
+      if (!HTTP_METHODS.has(method.toLowerCase())) continue;
+      const tags: string[] = Array.isArray(op?.tags) && op.tags.length > 0 ? op.tags : [];
+      const tagId = tags[0] ?? 'untagged';
+      out.push({
+        tagId,
+        method: method.toUpperCase(),
+        path: pathKey,
+        operationId: typeof op?.operationId === 'string' ? op.operationId : undefined,
+        summary: typeof op?.summary === 'string' ? op.summary : undefined,
+        api: {
+          ...cloneShallow(api),
+          paths: {
+            [pathKey]: {
+              [method]: op,
+              // Carry path-level shared fields (parameters, etc.)
+              ...Object.fromEntries(
+                ['parameters', 'summary', 'description', 'servers']
+                  .filter((k) => (pathItem as any)[k] !== undefined)
+                  .map((k) => [k, (pathItem as any)[k]]),
+              ),
+            },
+          },
+        },
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Generate a display title for one endpoint slice.
+ * Default format: "<METHOD> <path>"; uses summary when present and short.
+ */
+export function titleForEndpoint(slice: EndpointSlice): string {
+  if (slice.summary && slice.summary.length <= 40) {
+    return `${slice.method} ${slice.path} — ${slice.summary}`;
+  }
+  return `${slice.method} ${slice.path}`;
+}
