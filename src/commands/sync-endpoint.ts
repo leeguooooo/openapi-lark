@@ -131,10 +131,14 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     return results;
   }
 
+  // Tag-level recovery pool: prefer exact title match, then fall back to
+  // Untitled/Authentication zombies (created by earlier failed sync attempts).
+  const tagPool = poolByTitle(tagChildren);
+
   // Sequential per-tag (parallel per-endpoint inside)
   for (const tagId of tagIds) {
     const tagTitle = titleForTag(tagId, api, svc.tagAliases);
-    let tagNode = pickByTitle(tagChildren, tagTitle);
+    let tagNode = popFromPool(tagPool, tagTitle);
     if (!tagNode) {
       try {
         tagNode = createWikiChild(parent.spaceId, parent.nodeToken, tagTitle, larkBin);
@@ -148,6 +152,10 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         });
         continue;
       }
+    } else {
+      process.stdout.write(
+        `[sync] ${svc.name}: recycled tag node ${tagNode.nodeToken} (was "${tagNode.title}") -> "${tagTitle}"\n`,
+      );
     }
 
     // Render tag index (list of endpoints) to the tag docx
@@ -223,10 +231,6 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     results.push(...leafResults);
   }
   return results;
-}
-
-function pickByTitle(children: WikiChild[], title: string): WikiChild | undefined {
-  return children.find((c) => c.title.trim().toLowerCase() === title.trim().toLowerCase());
 }
 
 function poolByTitle(children: WikiChild[]): Map<string, WikiChild[]> {
