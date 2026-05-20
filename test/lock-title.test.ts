@@ -38,8 +38,19 @@ para
     const out = lockTitleInMarkdown(md, 'T');
     expect(out).toContain('# this looks like H1 but is code');
     expect(out).toMatch(/^## real H1$/m);
-    const h1Count = out.split('\n').filter((l) => /^# (?!#)/.test(l)).length;
-    expect(h1Count).toBe(1);
+    // Count H1s OUTSIDE fenced code blocks (markdown parsers, incl. lark-cli,
+    // don't treat in-fence `# x` as a heading).
+    const lines = out.split('\n');
+    let inFence = false;
+    let h1OutsideFence = 0;
+    for (const line of lines) {
+      if (/^```/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (!inFence && /^# (?!#)/.test(line)) h1OutsideFence++;
+    }
+    expect(h1OutsideFence).toBe(1);
   });
 
   it('no front-matter still works', () => {
