@@ -249,7 +249,17 @@ function popFromPool(pool: Map<string, WikiChild[]>, title: string): WikiChild |
   const k = title.trim().toLowerCase();
   const arr = pool.get(k);
   if (arr && arr.length > 0) return arr.shift();
-  // Try "untitled" zombie recovery
+  // Inverse-order match: "X — Y" and "Y — X" carry the same operation but
+  // different title order. v1.4 reversed the default order (summary first),
+  // so existing wiki nodes from v1.3 are titled "METHOD path — summary" and
+  // would no longer match new "summary — METHOD path" titles. Try the swap.
+  const parts = title.split(' — ');
+  if (parts.length === 2) {
+    const swapped = `${parts[1].trim()} — ${parts[0].trim()}`.toLowerCase();
+    const swapArr = pool.get(swapped);
+    if (swapArr && swapArr.length > 0) return swapArr.shift();
+  }
+  // Zombie recovery (titles clobbered by prior failed sync)
   for (const zk of ['untitled', 'authentication']) {
     const z = pool.get(zk);
     if (z && z.length > 0) return z.shift();
