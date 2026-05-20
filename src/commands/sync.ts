@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 import pLimit from 'p-limit';
 import { loadConfig, resolveOpenapiPath, ConfigError } from '../config/load.js';
 import { render, RenderError } from '../renderer/index.js';
+import { groupHeadingWarnings } from '../renderer/heading-check.js';
+import { runTreeSync } from './sync-tree.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
 import { push } from '../lark/push.js';
 import {
@@ -86,15 +88,75 @@ export async function runSync(args: SyncArgs): Promise<number> {
         const started = Date.now();
         const engine: Engine = args.engine ?? svc.render?.engine ?? 'widdershins';
         const openapiPath = resolveOpenapiPath(loaded.basedir, svc.openapi);
+
+        // Tree mode: split by tag, render each, push to child wiki nodes
+        if (svc.mode === 'tree') {
+          if (args.dryRun) {
+            // Tree dry-run: still render all parts to disk, skip wiki API and push
+            process.stdout.write(
+              `[sync] ${svc.name}: tree mode dry-run — rendering subtree to disk only\n`,
+            );
+          }
+          try {
+            const treeResults = await runTreeSync({
+              config: loaded.config,
+              basedir: loaded.basedir,
+              service: svc,
+              outDirRel: `.openapi-lark/${svc.name}`,
+              parallelChildren: parallel,
+              timeoutMs,
+              pushBytesLimit: loaded.config.maxPushBytes,
+            });
+            // Aggregate tree results into a single ServiceResult for the table.
+            // Detailed per-tag rows printed separately below.
+            const failed = treeResults.filter((r) => r.status === 'failed').length;
+            const oks = treeResults.filter((r) => r.status === 'ok').length;
+            const warns = treeResults.filter((r) => r.status === 'warning').length;
+            results[idx] = {
+              service: svc.name,
+              status: failed > 0 ? 'failed' : warns > 0 ? 'warning' : 'ok',
+              durationMs: Date.now() - started,
+              reason: `tree: ${oks} ok / ${failed} failed / ${warns} warning across ${treeResults.length} parts`,
+            };
+            for (const r of treeResults) {
+              const sym =
+                r.status === 'ok'
+                  ? '✓'
+                  : r.status === 'failed'
+                    ? '✗'
+                    : r.status === 'warning'
+                      ? '⚠'
+                      : '·';
+              process.stdout.write(
+                `[sync]   ${sym} ${r.service} ${r.docUrl ?? r.reason ?? ''} (${(r.durationMs / 1000).toFixed(1)}s)\n`,
+              );
+            }
+          } catch (err) {
+            results[idx] = {
+              service: svc.name,
+              status: 'failed',
+              durationMs: Date.now() - started,
+              reason: `tree sync error: ${(err as Error).message}`,
+            };
+          }
+          return;
+        }
+
         try {
           const result = await render({
             openapiPath,
             engine,
             maxResolvedSizeBytes: loaded.config.maxResolvedSizeBytes,
           });
-          for (const w of result.headingWarnings) {
+          // Group identical heading-jump warnings so 200 widdershins-emitted
+          // "Enumerated Values" lines collapse to one summary row.
+          const grouped = groupHeadingWarnings(result.headingWarnings);
+          for (const g of grouped) {
+            const samples = g.sampleLines.join(', ');
+            const more = g.count > g.sampleLines.length ? ', …' : '';
             process.stderr.write(
-              `[sync] ${svc.name}: heading jump H${w.from} → H${w.to} at line ${w.line} ("${w.text}") — see KNOWN_ISSUES #5\n`,
+              `[sync] ${svc.name}: heading jump H${g.from} → H${g.to} ` +
+                `"${g.pattern}" ×${g.count} (lines ${samples}${more}) — see KNOWN_ISSUES #5\n`,
             );
           }
           const outDir = resolve(loaded.basedir, '.openapi-lark');

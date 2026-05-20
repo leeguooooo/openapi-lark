@@ -2,6 +2,16 @@ export interface ServiceConfig {
   name: string;
   openapi: string;
   docToken: string;
+  /** 'single' (default): overwrite docToken's docx with full rendered output.
+   *  'tree': treat docToken as a wiki node; group endpoints by first tag, push
+   *  the overview to the parent docx, and create/update child wiki nodes per tag. */
+  mode?: 'single' | 'tree';
+  /** Map tag id → display title for child node names */
+  tagAliases?: Record<string, string>;
+  /** Only sync these tags (default: all tags found in openapi) */
+  includeTags?: string[];
+  /** Skip these tags */
+  excludeTags?: string[];
   render?: {
     engine: 'widdershins' | 'native';
   };

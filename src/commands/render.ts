@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { loadConfig, resolveOpenapiPath, ConfigError } from '../config/load.js';
 import { render, RenderError } from '../renderer/index.js';
+import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import {
   EXIT_BUSINESS,
   EXIT_CONFIG,
@@ -55,9 +56,13 @@ export async function runRender(args: RenderArgs): Promise<number> {
     process.stdout.write(
       `[render] ${svc.name}: wrote ${result.markdown.length} bytes to ${outPath} (resolved ${(result.resolvedSizeBytes / 1024).toFixed(1)} KB)\n`,
     );
-    for (const w of result.headingWarnings) {
+    const grouped = groupHeadingWarnings(result.headingWarnings);
+    for (const g of grouped) {
+      const samples = g.sampleLines.join(', ');
+      const more = g.count > g.sampleLines.length ? ', …' : '';
       process.stderr.write(
-        `[render] ${svc.name}: heading jump H${w.from} → H${w.to} at line ${w.line} ("${w.text}") — see KNOWN_ISSUES #5\n`,
+        `[render] ${svc.name}: heading jump H${g.from} → H${g.to} ` +
+          `"${g.pattern}" ×${g.count} (lines ${samples}${more}) — see KNOWN_ISSUES #5\n`,
       );
     }
     return EXIT_OK;
