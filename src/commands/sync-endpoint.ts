@@ -24,6 +24,14 @@ import {
   type ServiceResult,
 } from '../types.js';
 import { lockTitleInMarkdown } from './sync-tree.js';
+import {
+  loadLock,
+  saveLock,
+  lookup as lockLookup,
+  upsert as lockUpsert,
+  sha256,
+  type SyncLockData,
+} from '../sync-lock.js';
 
 export interface EndpointSyncContext {
   config: Config;
@@ -33,6 +41,10 @@ export interface EndpointSyncContext {
   parallel: number;
   timeoutMs: number;
   pushBytesLimit: number;
+  /** Force re-push even if hash matches. Default false. */
+  force?: boolean;
+  /** Shared mutable lockfile data; saved by caller after sync. */
+  lock: SyncLockData;
 }
 
 /**
@@ -304,6 +316,19 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
   const absPath = resolve(ctx.basedir, outRel);
   mkdirSync(resolve(absPath, '..'), { recursive: true });
   writeFileSync(absPath, markdown, 'utf8');
+
+  // Hash check: skip push if content unchanged from last successful sync
+  const hash = sha256(markdown);
+  const prior = lockLookup(ctx.lock, ctx.service.name, docToken);
+  if (!ctx.force && prior && prior.sha256 === hash && prior.title === titleForLock) {
+    return {
+      service: label,
+      status: 'skipped',
+      durationMs: Date.now() - started,
+      reason: `unchanged (sha256 match)`,
+    };
+  }
+
   const bytes = Buffer.byteLength(markdown, 'utf8');
   if (bytes > ctx.pushBytesLimit) {
     return {
@@ -323,6 +348,12 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
     timeoutMs: ctx.timeoutMs,
   });
   if (pushed.ok) {
+    // Record successful push in lockfile
+    lockUpsert(ctx.lock, ctx.service.name, docToken, {
+      sha256: hash,
+      title: titleForLock,
+      syncedAt: new Date().toISOString(),
+    });
     return {
       service: label,
       status: pushed.url ? 'ok' : 'warning',

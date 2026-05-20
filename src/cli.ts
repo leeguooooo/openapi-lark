@@ -118,6 +118,7 @@ async function main(): Promise<void> {
     .option('--engine <engine>', 'widdershins | native (v1 only widdershins)', parseEngine)
     .option('--parallel <n>', 'max concurrent services', parsePositiveInt)
     .option('--push-timeout <ms>', 'per-service push timeout in ms', parsePositiveInt)
+    .option('--force', 'ignore hash cache (sync-lock.json) and re-push every leaf')
     .action(
       async (
         service: string | undefined,
@@ -127,6 +128,7 @@ async function main(): Promise<void> {
           engine?: Engine;
           parallel?: number;
           pushTimeout?: number;
+          force?: boolean;
         },
       ) => {
         const code = await runSync({
@@ -136,6 +138,7 @@ async function main(): Promise<void> {
           engine: opts.engine,
           parallel: opts.parallel,
           pushTimeoutMs: opts.pushTimeout,
+          force: opts.force,
         });
         process.exit(code);
       },

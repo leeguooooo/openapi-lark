@@ -6,6 +6,7 @@ import { render, RenderError } from '../renderer/index.js';
 import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { runTreeSync } from './sync-tree.js';
 import { runEndpointSync } from './sync-endpoint.js';
+import { loadLock, saveLock } from '../sync-lock.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
 import { push } from '../lark/push.js';
 import {
@@ -25,6 +26,8 @@ export interface SyncArgs {
   engine?: Engine;
   parallel?: number;
   pushTimeoutMs?: number;
+  /** Skip hash cache; force re-push every leaf. */
+  force?: boolean;
 }
 
 export async function runSync(args: SyncArgs): Promise<number> {
@@ -83,6 +86,9 @@ export async function runSync(args: SyncArgs): Promise<number> {
   const timeoutMs = args.pushTimeoutMs ?? loaded.config.pushTimeoutMs;
   const results: ServiceResult[] = new Array(services.length);
 
+  // Lockfile: shared across all services in this run. Loaded once, saved once at end.
+  const lock = loadLock(loaded.basedir);
+
   await Promise.all(
     services.map((svc, idx) =>
       limit(async () => {
@@ -106,15 +112,18 @@ export async function runSync(args: SyncArgs): Promise<number> {
               parallel,
               timeoutMs,
               pushBytesLimit: loaded.config.maxPushBytes,
+              force: args.force,
+              lock,
             });
             const failed = epResults.filter((r) => r.status === 'failed').length;
             const oks = epResults.filter((r) => r.status === 'ok').length;
             const warns = epResults.filter((r) => r.status === 'warning').length;
+            const skipped = epResults.filter((r) => r.status === 'skipped').length;
             results[idx] = {
               service: svc.name,
               status: failed > 0 ? 'failed' : warns > 0 ? 'warning' : 'ok',
               durationMs: Date.now() - started,
-              reason: `endpoint: ${oks} ok / ${failed} failed / ${warns} warning across ${epResults.length} parts`,
+              reason: `endpoint: ${oks} ok / ${failed} failed / ${warns} warning / ${skipped} skipped across ${epResults.length} parts`,
             };
             for (const r of epResults) {
               const sym =
@@ -284,6 +293,17 @@ export async function runSync(args: SyncArgs): Promise<number> {
       }),
     ),
   );
+
+  // Persist hash cache so next run can skip unchanged docs
+  if (!args.dryRun) {
+    try {
+      saveLock(loaded.basedir, lock);
+    } catch (err) {
+      process.stderr.write(
+        `[sync] warning: failed to save lockfile: ${(err as Error).message}\n`,
+      );
+    }
+  }
 
   // Always print in declaration order, not completion order
   process.stdout.write('\n' + renderSummaryTable(results) + '\n');
