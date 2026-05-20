@@ -293,25 +293,52 @@ function safeFilename(s: string): string {
 /**
  * Force the docx + wiki-node title to `title`.
  *
- * Real-world calibration (lark-cli 1.0.32 + ap-southeast-1):
- *   - Markdown YAML front-matter `title:` is IGNORED by lark-cli
- *   - `docs +update --new-title X` is IGNORED under --command overwrite
- *   - lark-cli picks the FIRST `# H1` in the BODY as the docx title
- *   - No body H1 → docx title becomes "Untitled"
+ * Real-world calibration (lark-cli 1.0.32 + ap-southeast-1) — controlled tests:
+ *   - YAML front-matter `title:` is IGNORED; rendered as `## title: X` in body
+ *   - `--new-title X` under `--command overwrite` is IGNORED
+ *   - With EXACTLY one `# H1` in markdown → that H1 becomes the docx title
+ *     (and is removed from body)
+ *   - With MULTIPLE `# H1`s → docx title defaults to "Untitled"; all H1s
+ *     remain in body
+ *   - No H1 → docx title = "Untitled"
  *
- * Strategy: keep front-matter intact (its other settings are harmless), then
- * prepend `# <title>` as the FIRST line of the body so lark-cli locks onto it.
+ * Strategy: ensure exactly ONE H1, at the very top, equal to our desired title:
+ *   1. strip widdershins YAML front-matter (its `title:` doesn't help)
+ *   2. demote every other markdown `# X` (and HTML `<h1>`) to H2
+ *   3. prepend `# <title>` as the absolute first line
  */
 export function lockTitleInMarkdown(md: string, title: string): string {
-  if (md.startsWith('---')) {
-    const closeIdx = md.indexOf('\n---', 3);
+  let body = md;
+  if (body.startsWith('---')) {
+    const closeIdx = body.indexOf('\n---', 3);
     if (closeIdx > 0) {
-      const fmEnd = closeIdx + 4; // position right after the closing `---\n`
-      const fm = md.slice(0, fmEnd);
-      const body = md.slice(fmEnd).replace(/^\n+/, '');
-      return `${fm}\n# ${title}\n\n${body}`;
+      body = body.slice(closeIdx + 4).replace(/^\n+/, '');
     }
   }
-  // No front-matter — just prepend the H1
-  return `# ${title}\n\n${md}`;
+  // Demote markdown # H1 → ## H2 (line-start, not inside code blocks)
+  // Quick heuristic: replace `^# ` with `## ` outside fenced code blocks.
+  body = demoteH1(body);
+  // Demote raw <h1>...</h1> HTML tags too — widdershins emits these for the
+  // openapi info.title block. Lark-cli mostly ignores HTML tags for title
+  // resolution, but turning them into <h2> avoids competing H1 entries.
+  body = body.replace(/<h1\b/gi, '<h2').replace(/<\/h1>/gi, '</h2>');
+
+  return `# ${title}\n\n${body}`;
+}
+
+function demoteH1(md: string): string {
+  const lines = md.split('\n');
+  let inFence = false;
+  return lines
+    .map((line) => {
+      if (/^```/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      // ATX-style H1: `# heading`. Skip H1 anchored at start that is actually H2+.
+      if (/^# (?!#)/.test(line)) return '#' + line; // `# foo` → `## foo`
+      return line;
+    })
+    .join('\n');
 }
