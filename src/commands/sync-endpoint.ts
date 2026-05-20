@@ -172,12 +172,17 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       );
     }
 
-    // Render tag index (list of endpoints) to the tag docx
+    // Render tag-level index. In endpoint mode this is intentionally SHORT —
+    // just a heading + bullet list of child endpoints. Lark wiki's sidebar
+    // already lists the children; the doc itself should not duplicate the full
+    // per-tag content (that's what blew up the push to >1MB for 语音房/管理端).
+    const tagSlices = endpoints.filter((e) => e.tagId === tagId);
+    const indexMd = buildTagIndexMarkdown(tagTitle, tagSlices);
     results.push(
-      await renderAndPush({
+      await pushPrebuilt({
         ctx,
         label: `${svc.name} :: ${tagId} :: index`,
-        api: tagSplit.byTag[tagId],
+        markdown: indexMd,
         docToken: tagNode.objToken,
         outRel: `${ctx.outDirRel}/${safeFilename(tagId)}/_index.md`,
         titleForLock: tagTitle,
@@ -375,4 +380,85 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
 
 function safeFilename(s: string): string {
   return s.replace(/[^a-zA-Z0-9._\-一-鿿]+/g, '_').slice(0, 80);
+}
+
+function buildTagIndexMarkdown(
+  tagTitle: string,
+  slices: Array<{ method: string; path: string; summary?: string }>,
+): string {
+  const lines: string[] = [];
+  lines.push(`# ${tagTitle}`, '');
+  lines.push(`本节包含 **${slices.length}** 个接口。点击左侧 wiki 树展开查看：`, '');
+  for (const s of slices) {
+    const titleText = s.summary ? `${s.summary} — \`${s.method} ${s.path}\`` : `\`${s.method} ${s.path}\``;
+    lines.push(`- ${titleText}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+interface PushPrebuiltArgs {
+  ctx: EndpointSyncContext;
+  label: string;
+  markdown: string;
+  docToken: string;
+  outRel: string;
+  titleForLock: string;
+}
+
+async function pushPrebuilt(args: PushPrebuiltArgs): Promise<ServiceResult> {
+  const { ctx, label, markdown: rawMd, docToken, outRel, titleForLock } = args;
+  const started = Date.now();
+  const markdown = lockTitleInMarkdown(rawMd, titleForLock);
+
+  const absPath = resolve(ctx.basedir, outRel);
+  mkdirSync(resolve(absPath, '..'), { recursive: true });
+  writeFileSync(absPath, markdown, 'utf8');
+
+  // Hash check: skip push if content unchanged
+  const hash = sha256(markdown);
+  const prior = lockLookup(ctx.lock, ctx.service.name, docToken);
+  if (!ctx.force && prior && prior.sha256 === hash && prior.title === titleForLock) {
+    return {
+      service: label,
+      status: 'skipped',
+      durationMs: Date.now() - started,
+      reason: `unchanged (sha256 match)`,
+    };
+  }
+
+  const bytes = Buffer.byteLength(markdown, 'utf8');
+  if (bytes > ctx.pushBytesLimit) {
+    return {
+      service: label,
+      status: 'failed',
+      durationMs: Date.now() - started,
+      reason: `rendered ${(bytes / 1024).toFixed(0)} KB exceeds maxPushBytes`,
+    };
+  }
+  const pushed = push({
+    docToken,
+    mdPath: outRel,
+    cwd: ctx.basedir,
+    larkBin: ctx.config.larkBin,
+    timeoutMs: ctx.timeoutMs,
+  });
+  if (pushed.ok) {
+    lockUpsert(ctx.lock, ctx.service.name, docToken, {
+      sha256: hash,
+      title: titleForLock,
+      syncedAt: new Date().toISOString(),
+    });
+    return {
+      service: label,
+      status: pushed.url ? 'ok' : 'warning',
+      docUrl: pushed.url ?? undefined,
+      durationMs: Date.now() - started,
+    };
+  }
+  return {
+    service: label,
+    status: 'failed',
+    durationMs: Date.now() - started,
+    reason: `${pushed.reason}: ${pushed.message}`,
+  };
 }
