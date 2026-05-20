@@ -35,6 +35,17 @@ describe('escapePipesInTables', () => {
     const out = escapePipesInTables(md);
     expect(out).toContain('| 1 | a\\|b |');
   });
+
+  it('escapes whitespace-bounded pipes when not at column position (codex case)', () => {
+    // 2-column table; body row has content "val | more" with whitespace on both sides
+    // of the inner pipe. Previous heuristic skipped it (mis-classifying as delimiter);
+    // positional algorithm catches it because position doesn't match separator.
+    const md = `| col1 | col2     |
+|------|----------|
+| a    | val | more |`;
+    const out = escapePipesInTables(md);
+    expect(out).toContain('| a    | val \\| more |');
+  });
 });
 
 describe('stripUnsafeHtmlTags', () => {

@@ -36,6 +36,14 @@ export async function runSync(args: SyncArgs): Promise<number> {
     throw err;
   }
 
+  // Per spec: --engine native is not implemented in v1, returns exit 2 (not 1)
+  if (args.engine === 'native') {
+    process.stderr.write(
+      `[sync] --engine native is not implemented in v1; see Phase v1.5 in the spec. Use widdershins.\n`,
+    );
+    return EXIT_CONFIG;
+  }
+
   const services = args.service
     ? loaded.config.services.filter((s) => s.name === args.service)
     : loaded.config.services;
@@ -44,18 +52,17 @@ export async function runSync(args: SyncArgs): Promise<number> {
     return EXIT_CONFIG;
   }
 
-  // Preflight unless dry-run (no push)
-  if (!args.dryRun) {
-    try {
-      const p = preflight({ larkCliRange: loaded.config.engines.larkCli });
-      process.stdout.write(`[sync] preflight ok: ${p.bin} ${p.version}\n`);
-    } catch (err) {
-      if (err instanceof PreflightError) {
-        process.stderr.write(`[sync] preflight failed: ${err.message}\n`);
-        return EXIT_ENV;
-      }
-      throw err;
+  // Preflight runs in ALL modes (incl. dry-run). Spec data flow: preflight → lint → render → push.
+  // --dry-run only skips the push step; environment must still be valid.
+  try {
+    const p = preflight({ larkCliRange: loaded.config.engines.larkCli });
+    process.stdout.write(`[sync] preflight ok: ${p.bin} ${p.version}\n`);
+  } catch (err) {
+    if (err instanceof PreflightError) {
+      process.stderr.write(`[sync] preflight failed: ${err.message}\n`);
+      return EXIT_ENV;
     }
+    throw err;
   }
 
   // --parallel validation

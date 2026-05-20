@@ -1,13 +1,38 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runSync } from '../src/commands/sync.js';
 import { EXIT_OK } from '../src/types.js';
+import { makeFakeLark, pathWith } from './helpers/fake-lark.js';
 
 const FIXTURES = resolve(__dirname, 'fixtures/openapi');
 
 let workdir: string;
+let fakeLarkDir: string;
+let origPath: string | undefined;
+let origLarkStdout: string | undefined;
+let origLarkExit: string | undefined;
+
+beforeAll(() => {
+  fakeLarkDir = makeFakeLark().dir;
+  origPath = process.env.PATH;
+  origLarkStdout = process.env.FAKE_LARK_STDOUT;
+  origLarkExit = process.env.FAKE_LARK_EXIT;
+  process.env.PATH = pathWith(fakeLarkDir);
+  process.env.FAKE_LARK_STDOUT = '99.99.99\n';
+  process.env.FAKE_LARK_EXIT = '0';
+});
+
+afterAll(() => {
+  if (origPath === undefined) delete process.env.PATH;
+  else process.env.PATH = origPath;
+  if (origLarkStdout === undefined) delete process.env.FAKE_LARK_STDOUT;
+  else process.env.FAKE_LARK_STDOUT = origLarkStdout;
+  if (origLarkExit === undefined) delete process.env.FAKE_LARK_EXIT;
+  else process.env.FAKE_LARK_EXIT = origLarkExit;
+  rmSync(fakeLarkDir, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   workdir = mkdtempSync(join(tmpdir(), 'openapi-lark-sync-'));

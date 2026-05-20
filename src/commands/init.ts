@@ -11,14 +11,23 @@ export interface InitArgs {
 }
 
 /**
+ * Token shape sanity: feishu doc tokens are typically alphanumeric (sometimes with
+ * underscores/dashes), 16+ chars. We don't enforce a strict regex (forward compat),
+ * just minimum length + safe charset.
+ */
+function looksLikeDocToken(s: string): boolean {
+  return /^[A-Za-z0-9_-]{8,}$/.test(s);
+}
+
+/**
  * Extract docToken from a Feishu docx URL.
  *
- * Supported formats:
- *   https://feishu.cn/docx/<token>
- *   https://feishu.cn/wiki/<token>
- *   https://feishu.cn/docs/<token>
- *   https://*.larksuite.com/docx/<token>
- *   https://*.larkoffice.com/...
+ * Supported markers (broaden as feishu adds product types):
+ *   docx / docs / wiki / sheets / base / minutes / mindnote / okr
+ *
+ * If no known marker matches but the URL is on a trusted host AND the last path
+ * segment passes shape validation, fall back to it (best effort; logged at caller
+ * so user can correct).
  *
  * Trailing query/fragment is stripped.
  */
@@ -26,20 +35,35 @@ export function extractDocToken(url: string): string | null {
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
-    if (
-      !host.endsWith('feishu.cn') &&
-      !host.endsWith('larksuite.com') &&
-      !host.endsWith('larkoffice.com')
-    ) {
-      return null;
-    }
+    const trusted =
+      host.endsWith('feishu.cn') ||
+      host.endsWith('larksuite.com') ||
+      host.endsWith('larkoffice.com');
+    if (!trusted) return null;
     const parts = u.pathname.split('/').filter(Boolean);
-    // Look for known segment markers
-    const markers = new Set(['docx', 'docs', 'wiki', 'sheets', 'base']);
+    // Look for known segment markers first
+    const markers = new Set([
+      'docx',
+      'docs',
+      'wiki',
+      'sheets',
+      'base',
+      'minutes',
+      'mindnote',
+      'okr',
+    ]);
     for (let i = 0; i < parts.length - 1; i++) {
       if (markers.has(parts[i])) {
-        return parts[i + 1] || null;
+        const candidate = parts[i + 1];
+        if (candidate && looksLikeDocToken(candidate)) return candidate;
+        return null;
       }
+    }
+    // Best-effort fallback: last segment if it looks like a token AND there are
+    // >= 2 segments (avoids matching marketing URLs like /home or /docs alone).
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1];
+      if (looksLikeDocToken(last)) return last;
     }
     return null;
   } catch {

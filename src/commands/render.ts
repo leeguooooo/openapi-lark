@@ -32,6 +32,13 @@ export async function runRender(args: RenderArgs): Promise<number> {
     process.stderr.write(`[render] service not found: ${args.service}\n`);
     return EXIT_CONFIG;
   }
+  // Per spec: --engine native is not implemented in v1, returns exit 2 (not 1)
+  if (args.engine === 'native') {
+    process.stderr.write(
+      `[render] --engine native is not implemented in v1; see Phase v1.5 in the spec. Use widdershins.\n`,
+    );
+    return EXIT_CONFIG;
+  }
   const engine: Engine = args.engine ?? svc.render?.engine ?? 'widdershins';
   const openapiPath = resolveOpenapiPath(loaded.basedir, svc.openapi);
   try {

@@ -24,36 +24,65 @@ function countUnescapedPipes(s: string): number {
   return n;
 }
 
-function escapeExcessPipes(line: string, expectedPipes: number): string {
-  const current = countUnescapedPipes(line);
-  if (current <= expectedPipes) return line;
-  let excess = current - expectedPipes;
-  // Find the first pipe that is NOT the leading/trailing delimiter and escape it.
-  // We walk from index after first pipe to before last pipe.
-  const firstPipe = line.indexOf('|');
-  const lastPipe = line.lastIndexOf('|');
-  if (firstPipe === lastPipe) return line;
-  const chars = line.split('');
-  // Walk inner pipes left-to-right; escape until we drop to expected count.
-  // Skip the outermost two (delimiters) by tracking position vs first/last.
-  for (let i = firstPipe + 1; i < lastPipe && excess > 0; i++) {
-    if (chars[i] === '|' && chars[i - 1] !== '\\') {
-      // Heuristic: if both neighbors are whitespace, this is likely a column delimiter — skip.
-      const leftWs = /\s/.test(chars[i - 1] ?? '');
-      const rightWs = /\s/.test(chars[i + 1] ?? '');
-      if (leftWs && rightWs) continue;
-      chars[i] = '\\|';
-      excess--;
-    }
+/**
+ * Find the column indices (in the original string) of unescaped `|` characters in `line`.
+ */
+function pipePositions(line: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '|' && (i === 0 || line[i - 1] !== '\\')) out.push(i);
   }
-  return chars.join('');
+  return out;
+}
+
+/**
+ * Decide which pipes in a body row are column delimiters vs content:
+ *  - First pipe (leftmost) is always the leading delimiter
+ *  - Last pipe (rightmost) is always the trailing delimiter
+ *  - For inner pipes, expect `separatorInnerCount` of them as delimiters.
+ *    If the row has more inner pipes than that, escape the extras. We pick
+ *    the inner pipes WHOSE POSITIONS BEST MATCH the separator's inner pipes
+ *    (smallest absolute distance); the unmatched ones are content.
+ */
+function escapeContentPipes(line: string, separatorPipePositions: number[]): string {
+  if (separatorPipePositions.length < 2) return line;
+  const linePipes = pipePositions(line);
+  if (linePipes.length < 2) return line;
+  if (linePipes.length <= separatorPipePositions.length) return line;
+
+  const sepInner = separatorPipePositions.slice(1, -1);
+  const lineInnerIdx = linePipes.slice(1, -1); // positions in line
+  // Each inner separator pipe claims the closest unclaimed body inner pipe.
+  const claimed = new Set<number>();
+  for (const sepPos of sepInner) {
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < lineInnerIdx.length; i++) {
+      if (claimed.has(i)) continue;
+      const dist = Math.abs(lineInnerIdx[i] - sepPos);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) claimed.add(bestIdx);
+  }
+  // Unclaimed inner pipes = content; escape them.
+  // Walk right-to-left so earlier indices stay valid.
+  let chars = line;
+  for (let i = lineInnerIdx.length - 1; i >= 0; i--) {
+    if (claimed.has(i)) continue;
+    const pos = lineInnerIdx[i];
+    chars = chars.slice(0, pos) + '\\|' + chars.slice(pos + 1);
+  }
+  return chars;
 }
 
 export function escapePipesInTables(md: string): string {
   const lines = md.split('\n');
   const out: string[] = [];
-  let expectedPipes = 0;
-  let prevWasHeader = false;
+  let separatorPositions: number[] = [];
+  let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
@@ -62,29 +91,28 @@ export function escapePipesInTables(md: string): string {
       looksLikeTableRow && /^\|\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|$/.test(trimmed);
 
     if (looksLikeSeparator) {
-      // Separator row defines canonical column count
-      expectedPipes = countUnescapedPipes(trimmed);
+      // Separator row defines canonical column boundaries via pipe positions
+      separatorPositions = pipePositions(line);
+      // Re-escape the just-emitted header row (we now know the column boundaries)
+      if (headerIdx >= 0 && out.length > 0) {
+        out[headerIdx] = escapeContentPipes(out[headerIdx], separatorPositions);
+      }
       out.push(line);
-      prevWasHeader = false;
+      headerIdx = -1;
       continue;
     }
-    if (looksLikeTableRow && prevWasHeader) {
-      // Header row already emitted; this is the second table row before we saw a separator.
-      // Treat the header row's pipe count as canonical.
-      expectedPipes = countUnescapedPipes(lines[i - 1].trim());
-    }
-    if (looksLikeTableRow && expectedPipes > 0) {
-      out.push(escapeExcessPipes(line, expectedPipes));
+    if (looksLikeTableRow && separatorPositions.length > 0) {
+      out.push(escapeContentPipes(line, separatorPositions));
       continue;
     }
     if (looksLikeTableRow) {
-      // First row before separator — likely the header. Buffer pipe count for next row.
+      // First row before separator — header. Push as-is; will be re-escaped when separator arrives.
       out.push(line);
-      prevWasHeader = true;
+      headerIdx = out.length - 1;
       continue;
     }
-    expectedPipes = 0;
-    prevWasHeader = false;
+    separatorPositions = [];
+    headerIdx = -1;
     out.push(line);
   }
   return out.join('\n');

@@ -1,5 +1,5 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { findConfigPath, loadConfig, resolveOpenapiPath, ConfigError } from '../config/load.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
 import { EXIT_ENV, EXIT_OK } from '../types.js';
@@ -123,9 +123,18 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
           detail: 'authoritative permission check requires real lark API call (v2)',
         });
       }
-      void statSync; // reserved
     }
   }
+
+  // Note about auth: lark-cli has no standardized `lark auth status` command we can
+  // rely on yet. preflight runs `lark --version` which proves the binary is callable
+  // but does NOT verify the user is logged in. A failed sync push surfaces auth errors;
+  // we surface the limitation here so users know what doctor does and does not check.
+  checks.push({
+    name: 'auth',
+    status: 'skipped',
+    detail: 'auth verification deferred to first push (no standardized lark-cli auth probe in v1)',
+  });
 
   // Render report
   const colW = Math.max(20, ...checks.map((c) => c.name.length));
