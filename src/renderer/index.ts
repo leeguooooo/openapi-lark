@@ -3,6 +3,7 @@ import type { Engine } from '../types.js';
 import { renderWiddershins } from './widdershins/render.js';
 import type { HeadingWarning } from './heading-check.js';
 import { EXIT_CONFIG } from '../types.js';
+import { flattenAllOfInApi } from './flatten-allof.js';
 
 export class RenderError extends Error {
   exitCode = EXIT_CONFIG;
@@ -53,7 +54,7 @@ export async function loadAndDereference(
   openapiPath: string,
   maxResolvedSizeBytes: number,
 ): Promise<{ api: unknown; resolvedSizeBytes: number }> {
-  let api: unknown;
+  let api: any;
   try {
     api = await SwaggerParser.dereference(openapiPath);
   } catch (err) {
@@ -61,6 +62,10 @@ export async function loadAndDereference(
       `failed to load/dereference openapi at ${openapiPath}: ${(err as Error).message}`,
     );
   }
+  // Flatten allOf compositions so widdershins can render the schema tables
+  // for responses using `BaseResponse + payload` patterns. Without this, every
+  // such response shows "Inline" with no field details.
+  api = flattenAllOfInApi(api);
   let resolvedSizeBytes: number;
   try {
     resolvedSizeBytes = Buffer.byteLength(JSON.stringify(api), 'utf8');
