@@ -193,11 +193,156 @@ openapi-lark render    仅生成本地 md 到 .openapi-lark/<svc>/
 openapi-lark sync      端到端同步（preflight → render → push）
 openapi-lark sync --dry-run    本地渲染 + 假节点演练，零服务端调用
 openapi-lark sync --force      跳过 hash 缓存强推
+openapi-lark sync --show-diff  cache miss 时打前 20 行 unified diff（v0.2.2+）
 openapi-lark sync --parallel N  并发 service 数（CI 控制速率，建议 ≤4）
+openapi-lark install-hook       装 post-commit / pre-push git 钩子，自动跑 sync（v0.2.2+）
 openapi-lark doctor    环境诊断：lark-cli / auth status / scope check / openapi reachability
 ```
 
 每个命令 `--help` 看完整 flag。
+
+## 👥 团队 / CI 同步（推荐姿势）
+
+> 单人项目装 `install-hook` 在本地跑就行。**多人团队建议把 sync 放到 CI**，让 wiki 永远跟 `main` 分支一致，devs 不用各自开发者后台审 scope。
+
+### 推荐架构
+
+```
+开发者本机                    CI (GitHub Actions / Jenkins)              飞书 wiki
+─────────────                ───────────────────────────────             ──────────
+改 openapi → PR              push to main 触发                          ✓ sync
+                              ↓
+                              openapi-lark sync (bot 身份)                ↓
+                              ↑                                          devs 只读
+                              lockfile in CI cache（跨 run 持久 = 增量）
+```
+
+**为啥 CI 比本地好**：
+- ✅ 唯一真理源 = `main` 分支，wiki 永远跟代码同步
+- ✅ devs 不用申请 wiki 写权限 / 不用走开放平台审 scope
+- ✅ lockfile 在 CI cache，所有人共享增量缓存，秒级 skip 未变接口
+- ✅ 推送权限只在 CI，不会出现「dev push 完代码又改了 PR 但 wiki 没更新」
+
+### Lark / Feishu CI 鉴权
+
+CI 用 **bot 身份**（不是 user 身份），通过环境变量传 app 凭证（[lark-cli 源码确认](https://github.com/larksuite/cli/blob/main/internal/envvars/envvars.go)）：
+
+```bash
+export LARKSUITE_CLI_APP_ID=cli_xxxxxxxx          # 飞书开放平台 app 的 ID
+export LARKSUITE_CLI_APP_SECRET=xxxxxxxxxxxxx    # 同上 secret
+export LARKSUITE_CLI_BRAND=feishu                # 或 lark（Lark Suite 国际版）
+```
+
+**前置**：bot 必须被加进目标 wiki 空间作为协作者（编辑权限）。在飞书 wiki 空间「成员管理」里添加 bot。
+
+### GitHub Actions 范本
+
+```yaml
+# .github/workflows/sync-docs.yml
+name: Sync OpenAPI to Lark wiki
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - '.openapi-lark.yaml'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      # Restore incremental cache (.openapi-lark/sync-lock.json + rendered md)
+      # Key by openapi content hash so changed specs invalidate cleanly.
+      - uses: actions/cache@v4
+        with:
+          path: .openapi-lark
+          key: openapi-lark-${{ hashFiles('api/openapi.yaml', '.openapi-lark.yaml') }}
+          restore-keys: openapi-lark-
+
+      - run: npx @larksuite/cli@latest install
+      - run: npm i -g github:leeguooooo/openapi-lark
+
+      - run: openapi-lark sync
+        env:
+          LARKSUITE_CLI_APP_ID:     ${{ secrets.LARK_APP_ID }}
+          LARKSUITE_CLI_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARKSUITE_CLI_BRAND:      feishu
+          # 静默 self-update / skills notifier (CI 自动跳过，这里显式更稳)
+          LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1'
+          OPENAPI_LARK_NO_UPDATE_NOTIFIER:  '1'
+```
+
+### Jenkins 范本（Declarative Pipeline）
+
+```groovy
+// Jenkinsfile
+pipeline {
+  agent any
+  environment {
+    LARKSUITE_CLI_APP_ID     = credentials('lark-app-id')      // Jenkins Credentials
+    LARKSUITE_CLI_APP_SECRET = credentials('lark-app-secret')
+    LARKSUITE_CLI_BRAND      = 'feishu'
+    LARKSUITE_CLI_NO_UPDATE_NOTIFIER = '1'
+    OPENAPI_LARK_NO_UPDATE_NOTIFIER  = '1'
+  }
+  triggers {
+    // Only on main branch pushes that touched api/
+    githubPush()
+  }
+  stages {
+    stage('Install') {
+      steps {
+        sh 'npx @larksuite/cli@latest install'
+        sh 'npm i -g github:leeguooooo/openapi-lark'
+      }
+    }
+    stage('Sync') {
+      steps {
+        // 缓存 .openapi-lark/ 跨 build 持久（增量 sync 关键）
+        // Jenkins 没原生 cache，用 Job Cacher / Pipeline-Utility-Steps stash 或挂 PV
+        sh 'openapi-lark sync'
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: '.openapi-lark/**', allowEmptyArchive: true
+    }
+  }
+}
+```
+
+> ⚠️ Jenkins 没有 GitHub Actions 的 `actions/cache` 等价物。三种持久化路径，按基础设施选：
+> 1. **Job Cacher 插件** — 装 `jobcacher` 插件后用 `cache(maxCacheSize:..., caches:[arbitraryFileCache(path:'.openapi-lark', ...)])` 包 stage
+> 2. **挂载 PV / NFS** — agent 把 `.openapi-lark/` 软链到持久卷
+> 3. **完全不缓存** — 每次 sync 全推（50 个 leaf 大概 3-5 分钟，可接受）
+
+### 团队 lockfile 共享策略
+
+| 策略 | 适合 | 备注 |
+|---|---|---|
+| **CI cache（推荐）** | 中型团队 + 有 CI | 上面两个范本就是这种 |
+| **commit lockfile 进 git** | 无 CI / 必须本地 sync | 在 `.gitignore` 加 `!.openapi-lark/sync-lock.json` 例外；高频改 openapi 会撞 merge conflict（每个 leaf 一行 sha） |
+| **每人独立** | solo dev / 偶尔 sync | 当前默认行为；Dev B 首次 sync 会全推一遍但内容跟 Dev A 推的一样，纯浪费 wiki API |
+
+### devs 本地能做什么
+
+CI 接管 sync 之后，本地常用：
+
+```bash
+openapi-lark lint                 # PR 前校验 openapi 语法 + 配置
+openapi-lark render <svc>         # 纯本地预览渲染效果（零远程调用）
+openapi-lark sync --dry-run       # 完整 dry-run（仍读 wiki 验解析）
+```
+
+不需要本地装 git hook、不需要本地配 LARKSUITE_CLI_APP_*。
+
+---
 
 ## 🩺 doctor / 诊断
 

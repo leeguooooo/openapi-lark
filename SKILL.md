@@ -202,6 +202,44 @@ services:
 - **跨仓库共用 docToken 池**：用 `extends: ./shared/lark-docs.yaml` 引用同一份基础配置；子配置只覆盖差异
 - **多环境（dev / staging / prod）**：docToken 用 `${LARK_DOC_VOICE_ROOM_PROD}` 之类的 env 引用；CI 注入不同环境的 token
 
+## 团队 / CI 同步（重要）
+
+**多人团队 sync 应该放 CI 跑，不是每个 dev 本地手敲。** 决策依据：
+
+- ✅ wiki 永远跟 main 一致（唯一真理源 = main 分支）
+- ✅ devs 不用各自申请 wiki 写权限 / 不用走开放平台审 scope
+- ✅ lockfile 在 CI cache 跨 run 持久，团队共享增量缓存
+
+**CI 鉴权（bot 身份，环境变量）：**
+
+```bash
+LARKSUITE_CLI_APP_ID=cli_xxxxxxxx
+LARKSUITE_CLI_APP_SECRET=xxxxxxxxxxxxx
+LARKSUITE_CLI_BRAND=feishu          # 或 lark
+```
+
+前置：bot 必须被加进目标 wiki 空间作为编辑协作者（飞书 wiki「成员管理」里添加）。
+
+**GitHub Actions / Jenkins 完整范本**：见 [README 的「团队 / CI 同步」节](https://github.com/leeguooooo/openapi-lark#-%E5%9B%A2%E9%98%9F--ci-%E5%90%8C%E6%AD%A5%E6%8E%A8%E8%8D%90%E5%A7%BF%E5%8A%BF)。
+
+**devs 本地做什么**（CI 接管 sync 之后）：
+
+```bash
+openapi-lark lint                 # PR 前校验 openapi + 配置
+openapi-lark render <svc>         # 纯本地预览（零远程调用）
+openapi-lark sync --dry-run       # 完整 dry-run（仍读 wiki 验解析）
+```
+
+不需要本地装 hook、不需要本地配 LARKSUITE_CLI_APP_*。
+
+**git hook（仅推荐 solo dev / 小团队没 CI）**：
+
+```bash
+openapi-lark install-hook           # post-commit 非阻塞
+openapi-lark install-hook --kind pre-push   # 阻塞型
+OPENAPI_LARK_SKIP_HOOK=1 git commit ...     # 单次跳过
+```
+
 ## 搜索 / 查接口（跨项目）
 
 当 agent 在另一个项目里被问「voice-room 创建房间接口长啥样」「查一下 POST /api/xxx 的参数」时，**不要新装搜索工具**——直接用 lark-cli 搜飞书 wiki，配合本 skill 的命名规律就行。
