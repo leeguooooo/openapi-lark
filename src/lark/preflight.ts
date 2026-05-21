@@ -36,7 +36,8 @@ export function preflight(input: PreflightInput): PreflightResult {
   if (res.error && (res.error as NodeJS.ErrnoException).code === 'ENOENT') {
     throw new PreflightError(
       `lark-cli binary "${bin}" not found in PATH. ` +
-        `Install lark-cli (e.g. brew install lark-cli) or override with config field "larkBin".`,
+        `Install lark-cli via \`npx @larksuite/cli@latest install\` (see github.com/larksuite/cli) ` +
+        `or override with config field "larkBin".`,
     );
   }
   if (res.status !== 0) {

@@ -1,9 +1,9 @@
 ---
 name: openapi-lark
-description: 把项目 api/openapi.yaml 同步到飞书 docx / wiki 文档树。支持 single / tree / endpoint（每接口一个 wiki 子节点）三种结构，自动按 tag 拆分、中文优先标题、allOf 扁平化、响应字段表 + JSON 示例、hash 缓存。用于替代 yapi 文档管线。Trigger 当用户说「同步接口文档到飞书」「openapi 推到飞书」「替换 yapi」「lark docs from openapi」「飞书 API 文档自动化」「按 tag 拆文档」「每个接口一个文档」「openapi-lark」时。
+description: 把项目 OpenAPI / Swagger spec（本地 yaml/json **或 http(s):// URL**）同步到飞书 / Lark wiki & docx 文档树。支持 single / tree / endpoint（每接口一个 wiki 子节点）三种结构，自动按 tag 拆分 + path-prefix 分子组，中文优先标题、allOf 扁平化、响应字段表 + JSON 示例、hash 缓存、dry-run 真不推线上。对接 chanfana / Hono / FastAPI / NestJS Swagger 的 runtime /openapi.json 端点。用于替代 yapi 文档管线。Trigger 当用户说「同步接口文档到飞书」「openapi 推到飞书」「openapi 推到 lark」「替换 yapi」「lark docs from openapi」「swagger to feishu」「飞书 API 文档自动化」「按 tag 拆文档」「每个接口一个文档」「runtime openapi URL 同步」「chanfana / Hono / FastAPI openapi 推到飞书」「openapi-lark」时。
 ---
 
-# openapi-lark — OpenAPI → 飞书 docx / wiki tree
+# openapi-lark — OpenAPI → 飞书 / Lark wiki tree
 
 > 决策规则：何时跑哪条命令，多服务怎么组织，故障怎么诊。
 > 命令的具体 flag 看 `openapi-lark <cmd> --help`，不在本文件里维护（避免与 CLI 漂移）。
@@ -19,8 +19,29 @@ npx skills add leeguooooo/openapi-lark
 之后所有命令走 `npx -y -p github:leeguooooo/openapi-lark openapi-lark <cmd>`，本 skill 已在调用前缀里嵌好。
 
 **前置：**
-- lark-cli 已安装（`brew install lark-cli`）+ 已登录 `lark-cli auth login`
-- 项目里有 `api/openapi.yaml`（或任意路径的 openapi 3.x yaml/json）
+- lark-cli 已安装：`npx @larksuite/cli@latest install`（官方唯一推荐方式；详见 [larksuite/cli](https://github.com/larksuite/cli)）+ `lark-cli auth login --recommend`
+- 推荐 lark-cli ≥ 1.0.34（`auth check` 子命令，doctor 用它真验 scope）
+- 项目里有 OpenAPI 3.x — 可以是 **本地文件**（`api/openapi.yaml`）**或 http(s):// URL**（runtime 生成的 `/openapi.json` 端点，见下文）
+
+## URL openapi 源（chanfana / Hono / FastAPI / NestJS Swagger）
+
+v1.10 新支持。runtime 生成 `/openapi.json` 的框架，不用再 `curl > 快照` 维护过期文件：
+
+```yaml
+services:
+  - name: ai-girls
+    openapi: https://ai-girls.example.workers.dev/openapi.json
+    openapiHeaders:                  # 可选，鉴权头；${ENV} 插值
+      Authorization: "Bearer ${OPENAPI_TOKEN}"
+    openapiSnapshot: api/openapi.snapshot.json   # 可选，落盘做 git PR diff
+    mode: endpoint
+    docToken: ${LARK_DOC_AI_GIRLS}
+```
+
+- `${ENV}` 会被 config 加载阶段自动展开（保密信息不落盘）
+- `openapiSnapshot` 写的是 fetch 后的原始 JSON（不是 dereferenced），便于 PR review API 变更
+- `lint` / `doctor` 都已适配 URL 源（doctor 改做 HEAD 探活，不再误报 file not found）
+- 已知限制：外部 `$ref` 跨 URL 不解析；chanfana / Hono / FastAPI 输出的 openapi 通常自包含，几乎不踩
 
 ## 多 service 项目（一个 wiki URL 接 N 个 openapi）
 
@@ -102,10 +123,13 @@ services:
 用户给了什么？
 ├─ 项目里还没 .openapi-lark.yaml
 │   └─ 用上面「新项目快速开始」
+│       init 现在默认写 mode:endpoint + 从 info.title 推 parentTitle
+├─ 项目的 openapi 是 runtime 生成（chanfana / Hono / FastAPI / NestJS Swagger）
+│   └─ 直接把 /openapi.json 的 URL 填进 services[].openapi
+│       要鉴权就配 openapiHeaders；要 PR diff 就配 openapiSnapshot
 ├─ 已有 .openapi-lark.yaml，用户改了 openapi
 │   └─ openapi-lark sync
-│       内容没变的接口被 hash cache 自动 skip
-│       想强推：加 --force
+│       内容没变的接口被 hash cache 自动 skip；想强推加 --force
 ├─ 用户问「飞书父节点标题被改成 Authentication / Untitled 了」
 │   └─ 在 config 加 parentTitle: "<期望名>"；下次 sync 自动锁定
 ├─ 用户问「响应字段表只有 default 没有 200」/ 「字段不全」
@@ -114,23 +138,27 @@ services:
 ├─ 用户问「能不能给接口加请求/响应示例」
 │   └─ v1.7+ 已自动从 schema 合成 JSON 响应示例
 ├─ 用户问「飞书呈现样式 / 段落看不懂」
-│   └─ openapi-lark render <svc> → ./.openapi-lark/<svc>/ 看本地 md
+│   └─ openapi-lark render <svc> → 看本地 md（render 命令零服务端调用）
 │       中文优先标题 / 段落本地化 / operationId→summary 都已生效
-├─ 用户问「环境配置对吗 / lark-cli 缺了」
-│   └─ openapi-lark doctor
+├─ 用户问「环境配置对吗 / lark-cli 缺了 / 缺 scope」
+│   └─ openapi-lark doctor（v1.10 起会真用 lark-cli auth check
+│       预检 wiki:node:create / wiki:node:read / docx:document:write_only，
+│       缺哪条直接告诉你；token 6 小时内过期还会警告）
 ├─ 用户问「lark-cli 提示 missing scope」
 │   └─ 见下方「鉴权 scope」节
-└─ 用户问「不推送只看效果」
+└─ 用户问「不推送只看效果 / 试一下不出意外」
     └─ openapi-lark sync --dry-run
+        v1.10 起 endpoint/tree 模式 dry-run **真不会**创建 wiki 节点
+        或推 docx，日志每行加 (would) / (dry-run) 前缀
 ```
 
 ## 配置参考（完整）
 
 ```yaml
 engines:
-  larkCli: ">=0.1.0"
+  larkCli: ">=1.0.34"               # auth check 子命令需要 1.0.34+
 
-# 可选：覆盖底层 lark-cli 二进制名（默认 lark-cli；旧版本叫 lark）
+# 可选：覆盖底层 lark-cli 二进制名（默认 lark-cli；旧发行版叫 lark）
 # larkBin: lark
 
 # 可选：每接口推送大小上限（默认 600 KB；endpoint mode 一般用不到）
@@ -138,24 +166,34 @@ engines:
 # 一般 10-30 KB
 maxPushBytes: 1000000
 
-# 可选：跨 repo 共用基础配置
+# 可选：跨 repo 共用基础配置（单层 extends）
 # extends: ./shared/lark-docs.yaml
 
 # Lockfile 路径：.openapi-lark/sync-lock.json（自动生成；加进 .gitignore）
 
 services:
-  - name: voice-room                 # 服务名（lockfile + 输出目录用这个）
-    openapi: api/openapi.yaml        # 相对项目根
-    docToken: Uc6hwkXXXX             # 父 wiki 节点 token（不是 docx token！）
-                                     # 用 ${LARK_DOC_X} env 引用更好
-    mode: endpoint                    # single | tree | endpoint
-    parentTitle: 语音房                # 强制锁定父 wiki 标题（防止被偷）
-    tagAliases:                       # 中文化 tag 显示名
-      "语音房": "语音房接口"
-      "管理端": "管理端接口"
-      "Lucky Game": "幸运游戏接口"
-    includeTags: [基础服务, 语音房]     # 可选：只同步这些 tag
-    excludeTags: []                   # 可选：跳过这些 tag
+  # 本地文件源（最常见）
+  - name: voice-room                  # 服务名（lockfile + 输出目录用这个）
+    openapi: api/openapi.yaml         # 相对项目根
+    docToken: Uc6hwkXXXX              # 父 wiki 节点 token（不是 docx token！）
+                                      # 用 ${LARK_DOC_X} env 引用更好
+    mode: endpoint                     # single | tree | endpoint
+    parentTitle: 语音房                 # 强制锁定父 wiki 标题（防止被偷）
+    tagAliases:                        # 中文化 tag 显示名
+      "voice-room": "语音房接口"
+      "admin": "管理端接口"
+    includeTags: [基础服务, 语音房]      # 可选：只同步这些 tag
+    excludeTags: []                    # 可选：跳过这些 tag
+
+  # URL 源（chanfana / Hono / FastAPI / NestJS Swagger 运行时拉，v1.10+）
+  - name: ai-girls
+    openapi: https://ai-girls.example.workers.dev/openapi.json
+    openapiHeaders:                    # 可选：鉴权头；${ENV} 插值
+      Authorization: "Bearer ${OPENAPI_TOKEN}"
+    openapiSnapshot: api/openapi.snapshot.json  # 可选：落盘做 PR diff
+    docToken: ${LARK_DOC_AI_GIRLS}
+    mode: endpoint
+    parentTitle: AI Girls API
 ```
 
 ## 多服务组织建议
@@ -246,24 +284,28 @@ lark-cli auth login --recommend
 
 按下面顺序，每一步通过再进下一步：
 
-1. `openapi-lark doctor` — 环境层（lark-cli、auth、resolved size）
-2. `openapi-lark lint` — 配置层（schema、openapi 语法、env 变量）
-3. `openapi-lark render <svc>` — 渲染层（widdershins 输出 + heading 越级 warning）
-4. `openapi-lark sync --dry-run` — 端到端不推送
+1. `openapi-lark doctor` — 环境层（lark-cli、auth tokenStatus + expiresAt、scope 探针、openapi reachability）
+2. `openapi-lark lint` — 配置层（schema、openapi 语法、env 变量；URL 源走带鉴权 fetch）
+3. `openapi-lark render <svc>` — 渲染层（widdershins 输出 + heading 越级 warning，零服务端调用）
+4. `openapi-lark sync --dry-run` — 端到端**真不推**（v1.10 修复：endpoint/tree 模式之前会真创建 wiki 节点）
 5. `openapi-lark sync <svc>` — 真推送（首次会 push 全部；之后只推内容变了的）
 6. `openapi-lark sync --force` — 跳过 hash cache 强推（修复疑似不同步）
 
-## v1.7 已自动处理的渲染细节
+> 💡 默认 widdershins 的 doT 编译日志（"Loaded def..." / "Compiling code_csharp.dot..."）已被静默。想看回来：`OPENAPI_LARK_VERBOSE=1 openapi-lark sync`。
+
+## 自动处理的渲染细节（v1.7+）
 
 不需要你做任何配置，sync 时自动生效：
 
 - **中文优先标题**：endpoint 标题是「<summary> — <METHOD> <path>」
 - **allOf 扁平化**：BaseResponse + 业务字段的常见包装会被完整展开成单表
-- **段落本地化**：Parameters→参数 / Responses→响应 / Response Schema→响应 Schema / Enumerated Values→枚举值 / 等
+- **段落本地化**：Parameters→参数 / Responses→响应 / Response Schema→响应 Schema / Enumerated Values→枚举值 等
 - **operationId → summary**：`## getXxx` 替换为 `## 获取 XXX`
 - **响应 JSON 示例**：从 schema 合成真实示例值（用 example/format/enum/类型默认值），末尾 `### 响应示例 (200)`
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
+- **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
+- **createWikiChild 锁冲突自动重试**（v1.9+）：飞书 wiki 服务端 131009 错误自动退避重试
 
 ## 不要做的事
 
