@@ -74,13 +74,29 @@ if (args[0] === '--version' || args[0] === '-v') {
   process.exit(0);
 }
 const joined = args.join(' ');
+// Optional: make wiki read calls fail to exercise dry-run offline fallback.
+// Set FAKE_LARK_WIKI_READ_FAIL=1 to simulate the "user is still waiting for
+// wiki:node:read scope approval" scenario.
+const wikiReadFail = process.env.FAKE_LARK_WIKI_READ_FAIL === '1';
 if (joined.startsWith('wiki spaces get_node')) {
+  if (wikiReadFail) {
+    process.stdout.write(JSON.stringify({
+      code: 99991676, msg: 'permission denied — missing scope wiki:node:read'
+    }));
+    process.exit(1);
+  }
   emit({ code: 0, msg: 'ok', data: { node: {
     space_id: 'SPC1', node_token: 'NODE_PARENT', obj_token: 'parentdoc',
     obj_type: 'docx', title: 'Parent', parent_node_token: '',
   } } });
 }
 if (joined.startsWith('wiki +node-list')) {
+  if (wikiReadFail) {
+    process.stdout.write(JSON.stringify({
+      code: 99991676, msg: 'permission denied — missing scope wiki:node:read'
+    }));
+    process.exit(1);
+  }
   emit({ code: 0, msg: 'ok', data: { items: [], has_more: false } });
 }
 if (joined.startsWith('wiki +node-create')) {

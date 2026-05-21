@@ -59,28 +59,45 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
   const svc = ctx.service;
   const t0 = Date.now();
 
-  // Step 1: resolve the wiki node
-  let parent: ReturnType<typeof resolveWikiNode>;
-  try {
-    parent = resolveWikiNode(svc.docToken!, ctx.config.larkBin ?? 'lark-cli');
-  } catch (err) {
-    return [
-      {
-        service: svc.name,
-        status: 'failed',
-        durationMs: Date.now() - t0,
-        reason: err instanceof WikiError ? err.message : (err as Error).message,
-      },
-    ];
-  }
   if (ctx.dryRun) {
     process.stdout.write(
       `[sync] ${svc.name}: ⚠ DRY-RUN — wiki nodes will NOT be created/updated; local renders only\n`,
     );
   }
-  process.stdout.write(
-    `[sync] ${svc.name}: wiki parent resolved (space=${parent.spaceId}, title="${parent.title}")\n`,
-  );
+
+  // Step 1: resolve the wiki node. dry-run tolerates failure (e.g. user is
+  // still waiting on wiki:node:read scope approval) — fall back to a fake
+  // parent so the render preview still works. Real sync still fails fast.
+  let parent: ReturnType<typeof resolveWikiNode>;
+  try {
+    parent = resolveWikiNode(svc.docToken!, ctx.config.larkBin ?? 'lark-cli');
+    process.stdout.write(
+      `[sync] ${svc.name}: wiki parent resolved (space=${parent.spaceId}, title="${parent.title}")\n`,
+    );
+  } catch (err) {
+    if (!ctx.dryRun) {
+      return [
+        {
+          service: svc.name,
+          status: 'failed',
+          durationMs: Date.now() - t0,
+          reason: err instanceof WikiError ? err.message : (err as Error).message,
+        },
+      ];
+    }
+    process.stderr.write(
+      `[sync] ${svc.name}: ⚠ wiki parent unreachable in dry-run — falling back to local-only preview.\n` +
+        `        (cause: ${(err as Error).message.split('\n')[0]})\n`,
+    );
+    parent = {
+      spaceId: 'dryrun-space',
+      nodeToken: 'dryrun-root',
+      objToken: `dryrun-parent-${(svc.docToken ?? 'unknown').slice(-6)}`,
+      objType: 'docx',
+      title: svc.parentTitle || svc.name,
+      parentNodeToken: '',
+    };
+  }
 
   // Step 2: load openapi + split
   const openapiPath = resolveOpenapiPath(ctx.basedir, svc.openapi);
@@ -133,22 +150,33 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
     }),
   );
 
-  // Step 4: list existing children once, build title→child map
+  // Step 4: list existing children once, build title→child map.
+  // If parent was faked (dry-run + no wiki:node:read), skip the call entirely.
   let children: Awaited<ReturnType<typeof listWikiChildren>>;
-  try {
-    children = listWikiChildren(
-      parent.spaceId,
-      parent.nodeToken,
-      ctx.config.larkBin ?? 'lark-cli',
-    );
-  } catch (err) {
-    results.push({
-      service: svc.name,
-      status: 'failed',
-      durationMs: Date.now() - t0,
-      reason: `listWikiChildren failed: ${(err as Error).message}`,
-    });
-    return results;
+  if (parent.nodeToken.startsWith('dryrun-')) {
+    children = [];
+  } else {
+    try {
+      children = listWikiChildren(
+        parent.spaceId,
+        parent.nodeToken,
+        ctx.config.larkBin ?? 'lark-cli',
+      );
+    } catch (err) {
+      if (!ctx.dryRun) {
+        results.push({
+          service: svc.name,
+          status: 'failed',
+          durationMs: Date.now() - t0,
+          reason: `listWikiChildren failed: ${(err as Error).message}`,
+        });
+        return results;
+      }
+      process.stderr.write(
+        `[sync] ${svc.name}: ⚠ list children failed in dry-run — assuming empty pool\n`,
+      );
+      children = [];
+    }
   }
   // Build a pool of unclaimed children, indexed by lowercase title. We allow
   // multiple children per title (the wiki shows duplicates if a prior sync

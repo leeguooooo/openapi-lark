@@ -106,6 +106,52 @@ describe('sync --dry-run / endpoint mode', () => {
   }, 30_000);
 });
 
+describe('sync --dry-run / wiki read scope missing (offline fallback)', () => {
+  it('endpoint mode: still renders local md and exits 0 when wiki read fails', async () => {
+    const cfg = writeConfig('endpoint');
+    process.env.FAKE_LARK_WIKI_READ_FAIL = '1';
+    try {
+      const code = await runSync({ configPath: cfg, dryRun: true });
+      expect(code).toBe(EXIT_OK);
+      // No write-side calls should have leaked through
+      const records = readRecord(recordFile);
+      assertNoWrites(records);
+      // Local md still written
+      const outDir = join(workdir, '.openapi-lark', 'svc');
+      const files = readdirSync(outDir, { recursive: true, withFileTypes: true })
+        .filter((f) => f.isFile())
+        .map((f) => f.name);
+      expect(files.length).toBeGreaterThan(0);
+    } finally {
+      delete process.env.FAKE_LARK_WIKI_READ_FAIL;
+    }
+  }, 30_000);
+
+  it('tree mode: same fallback', async () => {
+    const cfg = writeConfig('tree');
+    process.env.FAKE_LARK_WIKI_READ_FAIL = '1';
+    try {
+      const code = await runSync({ configPath: cfg, dryRun: true });
+      expect(code).toBe(EXIT_OK);
+      assertNoWrites(readRecord(recordFile));
+    } finally {
+      delete process.env.FAKE_LARK_WIKI_READ_FAIL;
+    }
+  }, 30_000);
+
+  it('NON-dry-run: still fails fast when wiki read fails (offline fallback is dry-run only)', async () => {
+    const cfg = writeConfig('endpoint');
+    process.env.FAKE_LARK_WIKI_READ_FAIL = '1';
+    try {
+      const code = await runSync({ configPath: cfg, dryRun: false });
+      // We expect exit != 0 (some failed). Don't pin to specific code.
+      expect(code).not.toBe(EXIT_OK);
+    } finally {
+      delete process.env.FAKE_LARK_WIKI_READ_FAIL;
+    }
+  }, 30_000);
+});
+
 describe('sync --dry-run / tree mode', () => {
   it('does not call wiki +node-create or docs +update', async () => {
     const cfg = writeConfig('tree');
