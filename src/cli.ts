@@ -9,6 +9,8 @@ import { runSync } from './commands/sync.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
 import { EXIT_CONFIG, type Engine } from './types.js';
+import { checkCached, refreshCache } from './update/check.js';
+import { setPendingNotice, emitNoticeOnce } from './update/notice.js';
 
 function parseEngine(value: string): Engine {
   if (value !== 'widdershins' && value !== 'native') {
@@ -161,8 +163,25 @@ async function main(): Promise<void> {
       process.exit(code);
     });
 
+  // Update notifier: synchronous cache check at startup, async refresh in
+  // background. Notice is printed once at exit (via process.on('exit') below).
+  // Mirrors lark-cli's two-tier pattern (internal/update/update.go) — see
+  // src/update/check.ts for the architectural rationale.
+  const version = getVersion();
+  const cached = checkCached(version);
+  if (cached) setPendingNotice(cached);
+  void refreshCache(version).then(() => {
+    const fresh = checkCached(version);
+    if (fresh) setPendingNotice(fresh);
+  });
+
   await program.parseAsync(process.argv);
 }
+
+// Print update notice (if any) on any exit path, including process.exit(N)
+// from action handlers and normal completion. `exit` is sync-only — the notice
+// content was already computed at startup, so this is just I/O.
+process.on('exit', emitNoticeOnce);
 
 main().catch((err: unknown) => {
   process.stderr.write(`fatal: ${(err as Error).stack ?? String(err)}\n`);
