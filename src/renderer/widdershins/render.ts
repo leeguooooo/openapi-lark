@@ -1,8 +1,25 @@
 // @ts-expect-error - widdershins has no types
 import * as widdershins from 'widdershins';
+import { createRequire } from 'node:module';
 import { postProcess } from '../post-process.js';
 import { detectHeadingJumps, type HeadingWarning } from '../heading-check.js';
 import { exampleForOperation } from '../example-from-schema.js';
+
+// Silence the doT template engine's compile-time chatter (widdershins emits
+// 24+ lines of "Loaded def authentication.def" / "Compiling code_csharp.dot"
+// per render). dot.log defaults to true; setting once is enough (singleton).
+// Override with OPENAPI_LARK_VERBOSE=1 if you actually want to see them.
+// Use createRequire so we get the mutable CJS module object (ESM namespace
+// imports are frozen — assigning .log throws "Cannot assign to property 'log'").
+if (!process.env.OPENAPI_LARK_VERBOSE) {
+  try {
+    const cjsRequire = createRequire(import.meta.url);
+    const dotMod = cjsRequire('dot');
+    dotMod.log = false;
+  } catch {
+    // dot not present or unwritable — ignore; noise stays but doesn't break us
+  }
+}
 
 export interface RenderInput {
   /** Dereferenced OpenAPI object */

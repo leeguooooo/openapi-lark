@@ -212,22 +212,35 @@ lark-cli wiki +node-list --space-id <X> --parent-node-token <project parent> --p
 
 ## 鉴权 scope
 
-`lark-cli auth login` 默认 scope 够用于基础读写。但下列操作需要额外 scope：
+`lark-cli auth login` 默认 scope 够用于基础读写。但下列操作需要额外 scope。
 
-| 操作 | scope |
-|---|---|
-| 创建 / 更新 docx | 默认已有 |
-| 创建 wiki 子节点 | `wiki:node:write`（默认通常有） |
-| **清理 zombie 节点（move）** | `wiki:node:move` |
-| **删除 docx**（少见） | `space:document:delete`（但 wiki 托管的 docx 仍 forbidden，需用 move） |
+**scope 名取自飞书开放平台官方文档**（实测：`wiki:node:write` 不存在，飞书会返回 invalid scope）。如果某条 API 提示 "missing scope"，按下表对应一次性补齐：
 
-需要时跑：
+| 操作 | 推荐 scope（细粒度） | 兜底 scope（粗粒度） |
+|---|---|---|
+| 读 docx 内容 | `docx:document:readonly` | `docx:document` |
+| 创建 / 更新 docx | `docx:document` | — |
+| 读 wiki 节点信息 | `wiki:node:read` | `wiki:wiki:readonly` |
+| 创建 wiki 子节点 | `wiki:node:create` | `wiki:wiki` |
+| **移动 wiki 节点（清理 zombie）** | `wiki:node:move` | `wiki:wiki` |
+| **删除 docx**（少见） | `space:document:delete`（但 wiki 托管的 docx 仍 forbidden，需用 move） | — |
+
+> 💡 `openapi-lark doctor` 现在会用 `lark-cli auth check --scope "..."` 预检关键 scope（需要 lark-cli ≥ 1.0.34），缺了会直接告诉你补哪条。
+
+需要时跑（示例：把上面表里你缺的 scope 拼起来）：
 
 ```bash
-lark-cli auth login --scope "wiki:node:move space:document:delete"
+# 预检（无浏览器跳转，秒返）
+lark-cli auth check --scope "wiki:node:create wiki:node:read docx:document:write_only"
+
+# 补缺（按 doctor 提示拼）
+lark-cli auth login --scope "wiki:node:create wiki:node:move space:document:delete"
+
+# 或一次开足官方推荐 scope（懒人模式）
+lark-cli auth login --recommend
 ```
 
-会输出 verification URL，浏览器打开授权后 CLI 自动拿新 token。
+`auth login` 会输出 verification URL，浏览器打开授权后 CLI 自动拿新 token。
 
 ## 故障诊断序
 
