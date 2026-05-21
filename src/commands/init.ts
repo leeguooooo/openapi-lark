@@ -3,6 +3,23 @@ import { resolve } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { EXIT_CONFIG, EXIT_OK } from '../types.js';
 
+/**
+ * Best-effort read of `info.title` from a local OpenAPI file.
+ * Returns null when the file is missing / unparseable / has no title.
+ * Never throws — init must continue even if the spec is broken or remote.
+ */
+export function readOpenapiTitle(absPath: string): string | null {
+  try {
+    if (!existsSync(absPath)) return null;
+    const raw = readFileSync(absPath, 'utf8');
+    const parsed = absPath.endsWith('.json') ? JSON.parse(raw) : parseYaml(raw);
+    const title = parsed?.info?.title;
+    return typeof title === 'string' && title.trim() ? title.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface InitArgs {
   name: string;
   openapi: string;
@@ -99,13 +116,22 @@ export async function runInit(args: InitArgs): Promise<number> {
     ? (doc.services as Array<Record<string, unknown>>)
     : [];
   const idx = services.findIndex((s) => s.name === args.name);
+  // Defaults aligned with SKILL.md recommendation:
+  //   - mode: endpoint  (one wiki node per (path, method) — best for cross-project lookup)
+  //   - parentTitle    (locks wiki node title against accidental edits; only set when we can
+  //                     read it from info.title — URL openapi / missing file → skip silently)
   const entry: Record<string, unknown> = {
     name: args.name,
     openapi: args.openapi,
+    mode: 'endpoint',
     docToken,
   };
+  const openapiAbs = resolve(args.openapi);
+  const title = readOpenapiTitle(openapiAbs);
+  if (title) entry.parentTitle = title;
   if (idx >= 0) {
-    services[idx] = entry;
+    // Preserve user-edited keys not in our defaults (e.g. render.engine)
+    services[idx] = { ...services[idx], ...entry };
   } else {
     services.push(entry);
   }
@@ -116,6 +142,7 @@ export async function runInit(args: InitArgs): Promise<number> {
   process.stdout.write(
     `[init] wrote ${configPath}\n` +
       `       service "${args.name}" -> docToken ${docToken}\n` +
+      `       defaults: mode=endpoint${title ? `, parentTitle="${title}"` : ''}\n` +
       `       review engines.larkCli before running sync\n`,
   );
   return EXIT_OK;

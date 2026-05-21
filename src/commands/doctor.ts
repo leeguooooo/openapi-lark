@@ -1,8 +1,23 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { existsSync } from 'node:fs';
 import { findConfigPath, loadConfig, resolveOpenapiPath, ConfigError } from '../config/load.js';
-import { preflight, PreflightError } from '../lark/preflight.js';
+import { preflight, PreflightError, authStatus, authCheckScopes } from '../lark/preflight.js';
 import { EXIT_ENV, EXIT_OK } from '../types.js';
+
+/**
+ * Scope hints for `lark-cli auth check`. The names come from Feishu Open
+ * Platform (verified 2026-05) — `wiki:node:write` does NOT exist; the correct
+ * name is `wiki:node:create`. Each entry is one scope we pass to
+ * `lark-cli auth check`; lark-cli reports it as granted or missing.
+ */
+const SCOPES_FOR_SYNC = [
+  'wiki:node:read',
+  'wiki:node:create',
+  'docx:document:write_only',
+];
+
+/** Token expires within this many ms → warn but still pass (≤ 6h by default). */
+const SOON_EXPIRY_WARN_MS = 6 * 60 * 60 * 1000;
 
 export interface DoctorArgs {
   configPath?: string;
@@ -135,15 +150,57 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
     }
   }
 
-  // Note about auth: lark-cli has no standardized `lark auth status` command we can
-  // rely on yet. preflight runs `lark --version` which proves the binary is callable
-  // but does NOT verify the user is logged in. A failed sync push surfaces auth errors;
-  // we surface the limitation here so users know what doctor does and does not check.
-  checks.push({
-    name: 'auth',
-    status: 'skipped',
-    detail: 'auth verification deferred to first push (no standardized lark-cli auth probe in v1)',
-  });
+  // Auth probe: cheap local check via `lark-cli auth status` (no API call).
+  // Catches: missing login, expired token, soon-to-expire token.
+  // Does NOT catch scope-level gaps for newly-needed APIs (those still need a
+  // real API call); but at least detects the "expired 1 day ago, sync ate 5 min
+  // before erroring" failure mode.
+  const auth = authStatus({ larkBin: loaded?.config.larkBin });
+  if (!auth.ok) {
+    checks.push({ name: 'auth', status: 'fail', detail: auth.reason ?? 'unknown auth failure' });
+  } else {
+    const expiryInfo = auth.expiresInMs !== undefined
+      ? auth.expiresInMs < SOON_EXPIRY_WARN_MS
+        ? ` — ⚠ expires in ${(auth.expiresInMs / 3600_000).toFixed(1)}h (${auth.expiresAt})`
+        : ` (expires ${auth.expiresAt})`
+      : '';
+    checks.push({
+      name: 'auth',
+      status: 'pass',
+      detail: `tokenStatus=${auth.tokenStatus ?? 'unknown'}, ${auth.scopes.length} scope(s)${expiryInfo}`,
+    });
+  }
+
+  // Scope check — authoritative via `lark-cli auth check`. Only run when we have
+  // a successful auth status. lark-cli ≥ 1.0.34 needed; older versions skip silently.
+  if (auth.ok) {
+    const scopeCheck = authCheckScopes({
+      scopes: SCOPES_FOR_SYNC,
+      larkBin: loaded?.config.larkBin,
+    });
+    if (scopeCheck === null) {
+      checks.push({
+        name: 'auth.scopes',
+        status: 'skipped',
+        detail: 'lark-cli auth check unavailable (need ≥ 1.0.34); cannot verify scopes',
+      });
+    } else if (scopeCheck.ok) {
+      checks.push({
+        name: 'auth.scopes',
+        status: 'pass',
+        detail: `granted: ${scopeCheck.granted.join(', ')}`,
+      });
+    } else {
+      const bin = loaded?.config.larkBin ?? 'lark-cli';
+      const missing = scopeCheck.missing.join(' ');
+      checks.push({
+        name: 'auth.scopes',
+        status: 'fail',
+        detail:
+          `missing scope(s): ${missing}. Run \`${bin} auth login --scope "${missing}"\` (or --recommend)`,
+      });
+    }
+  }
 
   // Render report
   const colW = Math.max(20, ...checks.map((c) => c.name.length));

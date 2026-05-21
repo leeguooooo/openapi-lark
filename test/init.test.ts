@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { extractDocToken } from '../src/commands/init.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
+import { extractDocToken, readOpenapiTitle, runInit } from '../src/commands/init.js';
 
 describe('extractDocToken', () => {
   it('extracts from feishu.cn /docx/', () => {
@@ -44,5 +48,117 @@ describe('extractDocToken', () => {
 
   it('returns null for single-segment path', () => {
     expect(extractDocToken('https://feishu.cn/home')).toBeNull();
+  });
+});
+
+describe('readOpenapiTitle', () => {
+  let workdir: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), 'openapi-lark-init-'));
+  });
+  afterEach(() => {
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  it('reads info.title from yaml', () => {
+    const p = join(workdir, 'api.yaml');
+    writeFileSync(p, 'openapi: 3.0.0\ninfo:\n  title: My Service\n  version: 1.0\npaths: {}\n');
+    expect(readOpenapiTitle(p)).toBe('My Service');
+  });
+
+  it('reads info.title from json', () => {
+    const p = join(workdir, 'api.json');
+    writeFileSync(p, JSON.stringify({ info: { title: 'JSON Svc' } }));
+    expect(readOpenapiTitle(p)).toBe('JSON Svc');
+  });
+
+  it('returns null when file missing', () => {
+    expect(readOpenapiTitle(join(workdir, 'nope.yaml'))).toBeNull();
+  });
+
+  it('returns null when info.title absent', () => {
+    const p = join(workdir, 'no-title.yaml');
+    writeFileSync(p, 'openapi: 3.0.0\npaths: {}\n');
+    expect(readOpenapiTitle(p)).toBeNull();
+  });
+
+  it('returns null for unparseable', () => {
+    const p = join(workdir, 'bad.yaml');
+    writeFileSync(p, '{ not: valid: yaml ::: ');
+    expect(readOpenapiTitle(p)).toBeNull();
+  });
+});
+
+describe('runInit defaults', () => {
+  let workdir: string;
+  let cwdOrig: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), 'openapi-lark-init-run-'));
+    cwdOrig = process.cwd();
+    process.chdir(workdir);
+  });
+  afterEach(() => {
+    process.chdir(cwdOrig);
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  it('writes mode: endpoint and parentTitle from info.title', async () => {
+    writeFileSync(
+      'api.yaml',
+      'openapi: 3.0.0\ninfo:\n  title: Voice Room\n  version: 1.0\npaths: {}\n',
+    );
+    const code = await runInit({
+      name: 'voice',
+      openapi: 'api.yaml',
+      docUrl: 'https://feishu.cn/wiki/wikXYZ12345',
+      configPath: '.openapi-lark.yaml',
+    });
+    expect(code).toBe(0);
+    const cfg = parseYaml(readFileSync('.openapi-lark.yaml', 'utf8')) as any;
+    expect(cfg.services[0]).toMatchObject({
+      name: 'voice',
+      openapi: 'api.yaml',
+      mode: 'endpoint',
+      parentTitle: 'Voice Room',
+      docToken: 'wikXYZ12345',
+    });
+  });
+
+  it('omits parentTitle when openapi file is missing (URL or pre-init)', async () => {
+    const code = await runInit({
+      name: 'remote-svc',
+      openapi: 'https://example.com/openapi.json',
+      docUrl: 'https://feishu.cn/wiki/wikXYZ12345',
+      configPath: '.openapi-lark.yaml',
+    });
+    expect(code).toBe(0);
+    const cfg = parseYaml(readFileSync('.openapi-lark.yaml', 'utf8')) as any;
+    expect(cfg.services[0].mode).toBe('endpoint');
+    expect(cfg.services[0].parentTitle).toBeUndefined();
+  });
+
+  it('preserves user-edited keys on re-init', async () => {
+    writeFileSync(
+      '.openapi-lark.yaml',
+      'engines:\n  larkCli: ">=0.1.0"\nservices:\n  - name: voice\n    openapi: api.yaml\n    docToken: wikXYZ12345\n    render:\n      engine: widdershins\n',
+    );
+    writeFileSync(
+      'api.yaml',
+      'openapi: 3.0.0\ninfo:\n  title: Voice Room\n  version: 1.0\npaths: {}\n',
+    );
+    const code = await runInit({
+      name: 'voice',
+      openapi: 'api.yaml',
+      docUrl: 'https://feishu.cn/wiki/wikXYZ12345',
+      configPath: '.openapi-lark.yaml',
+    });
+    expect(code).toBe(0);
+    const cfg = parseYaml(readFileSync('.openapi-lark.yaml', 'utf8')) as any;
+    expect(cfg.services[0]).toMatchObject({
+      name: 'voice',
+      mode: 'endpoint',
+      parentTitle: 'Voice Room',
+      render: { engine: 'widdershins' },
+    });
   });
 });
