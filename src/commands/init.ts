@@ -46,9 +46,13 @@ export function diagnoseOpenapiSource(basedir: string): string[] {
   if (existsSync(resolve(basedir, 'Cargo.toml'))) {
     hints.push('detected Rust project — utoipa generates OpenAPI from axum/actix handlers');
   }
-  // Heuristic: docs/ folder full of .md but no openapi → likely hand-written docs
-  if (existsSync(resolve(basedir, 'docs')) && hints.length === 0) {
-    hints.push('found a docs/ folder — openapi-lark needs an OpenAPI spec (JSON/YAML), not markdown; we can\'t auto-convert');
+  // docs/ folder check runs unconditionally — a Hono project with hand-written
+  // docs/*.md still needs both hints (here's how to generate OpenAPI from
+  // your stack AND here's why your existing docs/ won't be picked up).
+  if (existsSync(resolve(basedir, 'docs'))) {
+    hints.push(
+      "found a docs/ folder — openapi-lark needs an OpenAPI spec (JSON/YAML), not markdown; we can't auto-convert. If your docs are the source of truth, generate openapi.json from them with a script and point services[].openapi at the output",
+    );
   }
   return hints;
 }

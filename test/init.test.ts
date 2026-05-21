@@ -205,9 +205,20 @@ describe('diagnoseOpenapiSource', () => {
     expect(hints.some((h) => h.includes('FastAPI'))).toBe(true);
   });
 
-  it('falls back to docs/ hint when no framework detected', () => {
+  it('emits docs/ hint when present (also with no framework)', () => {
     require('node:fs').mkdirSync(join(workdir, 'docs'));
     const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('docs/'))).toBe(true);
+  });
+
+  it('emits BOTH framework and docs/ hints when both present (real Hono case)', () => {
+    writeFileSync(
+      join(workdir, 'package.json'),
+      JSON.stringify({ dependencies: { hono: '^4.0.0' } }),
+    );
+    require('node:fs').mkdirSync(join(workdir, 'docs'));
+    const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('Hono'))).toBe(true);
     expect(hints.some((h) => h.includes('docs/'))).toBe(true);
   });
 

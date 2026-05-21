@@ -12,14 +12,36 @@ import {
 import { EXIT_ENV, EXIT_OK } from '../types.js';
 
 /**
- * Scope hints for `lark-cli auth check`. The names come from Feishu Open
- * Platform (verified 2026-05) — `wiki:node:write` does NOT exist; the correct
- * name is `wiki:node:create`. Each entry is one scope we pass to
- * `lark-cli auth check`; lark-cli reports it as granted or missing.
+ * Scopes that endpoint-mode sync touches end-to-end. doctor probes ALL of
+ * them up front so users don't discover them one-at-a-time across dry-run
+ * and real sync.
+ *
+ * Authoritative source: lark-cli's own per-shortcut declarations (verified
+ * against larksuite/cli@1.0.35 shortcuts/*.go):
+ *
+ *   resolveWikiNode  (wiki spaces get_node) — wiki:node:retrieve
+ *     ← shortcuts/wiki/wiki_node_get.go:56
+ *   listWikiChildren (wiki +node-list)      — wiki:node:retrieve
+ *     ← shortcuts/wiki/wiki_node_list.go:32
+ *   createWikiChild  (wiki +node-create)    — wiki:node:create
+ *                                           + wiki:node:read + wiki:space:read
+ *     ← shortcuts/wiki/wiki_node_create.go:43
+ *   push             (docs +update)         — docx:document:write_only
+ *                                           + docx:document:readonly
+ *     ← shortcuts/doc/docs_update.go:66
+ *
+ * Note: `wiki:node:write` does NOT exist — Feishu rejects it. Use
+ * `wiki:node:create` for the create capability.
+ *
+ * Previous versions of doctor under-listed and let dry-run pass while real
+ * sync still failed on docx:document:readonly / wiki:space:read mid-way.
  */
 const SCOPES_FOR_SYNC = [
+  'wiki:node:retrieve',
   'wiki:node:read',
   'wiki:node:create',
+  'wiki:space:read',
+  'docx:document:readonly',
   'docx:document:write_only',
 ];
 

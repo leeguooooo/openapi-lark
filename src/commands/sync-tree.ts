@@ -61,7 +61,9 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
 
   if (ctx.dryRun) {
     process.stdout.write(
-      `[sync] ${svc.name}: ⚠ DRY-RUN — wiki nodes will NOT be created/updated; local renders only\n`,
+      `[sync] ${svc.name}: ⚠ DRY-RUN — no wiki writes (createWikiChild, docs +update); local renders only.\n` +
+        `        ℹ dry-run still READS wiki (resolveWikiNode, listWikiChildren) for recycling pool display.\n` +
+        `        For zero remote calls, use \`openapi-lark render ${svc.name}\` instead.\n`,
     );
   }
 
