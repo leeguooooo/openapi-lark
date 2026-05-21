@@ -191,3 +191,75 @@ export function authCheckScopes(input: {
     missing: Array.isArray(parsed.missing) ? parsed.missing : [],
   };
 }
+
+export interface AppScopes {
+  ok: boolean;
+  /** App ID — used to build developer console URLs */
+  appId?: string;
+  /** "lark" → open.larksuite.com, else open.feishu.cn */
+  brand?: string;
+  /** Scopes the APP itself has enabled (vs scopes the user has granted) */
+  userScopes: string[];
+  reason?: string;
+}
+
+/**
+ * `lark-cli auth scopes` returns the **app-level** scope list (what scopes the
+ * app on the Lark developer console has been approved for). This is distinct
+ * from `auth check`, which checks the **user-level** token's granted scopes.
+ *
+ * Why we need both: a missing scope can mean either
+ *   (a) user hasn't granted it (fix: `auth login --scope X`), or
+ *   (b) app itself doesn't have it (fix: developer console approval)
+ * (a) and (b) need different remediation; conflating them sends users on
+ * wild-goose chases through `auth login` until they realize the app is the
+ * problem. See user feedback in larksuite/cli#1012-context.
+ */
+export function appScopes(input: { larkBin?: string; env?: NodeJS.ProcessEnv }): AppScopes {
+  const bin = input.larkBin ?? 'lark-cli';
+  const res = spawnSync(bin, ['auth', 'scopes', '--format', 'json'], {
+    encoding: 'utf8',
+    env: input.env ?? process.env,
+    timeout: 10_000,
+  });
+  if (res.status !== 0) {
+    return {
+      ok: false,
+      userScopes: [],
+      reason: `${bin} auth scopes failed: ${(res.stderr || res.stdout || 'unknown').toString().trim().slice(0, 200)}`,
+    };
+  }
+  // The command prints "Querying app scopes..." to stdout before the JSON,
+  // so we have to slice from the first `{`.
+  const jsonStart = res.stdout.indexOf('{');
+  if (jsonStart < 0) {
+    return { ok: false, userScopes: [], reason: 'no JSON in auth scopes output' };
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(res.stdout.slice(jsonStart));
+  } catch (err) {
+    return { ok: false, userScopes: [], reason: `parse auth scopes: ${(err as Error).message}` };
+  }
+  return {
+    ok: true,
+    appId: typeof parsed.appId === 'string' ? parsed.appId : undefined,
+    brand: typeof parsed.brand === 'string' ? parsed.brand : undefined,
+    userScopes: Array.isArray(parsed.userScopes) ? parsed.userScopes : [],
+  };
+}
+
+/**
+ * Build the Lark developer console URL that lets the user enable a scope on
+ * the app side. Mirrors lark-cli's own URL convention (cmd/root.go:413-418).
+ */
+export function consoleScopeApplyUrl(input: {
+  appId: string;
+  brand?: string;
+  scopes: string[];
+}): string {
+  const host = input.brand === 'lark' ? 'open.larksuite.com' : 'open.feishu.cn';
+  const scopeParam = encodeURIComponent(input.scopes.join(' '));
+  const clientId = encodeURIComponent(input.appId);
+  return `https://${host}/page/scope-apply?clientID=${clientId}&scopes=${scopeParam}`;
+}

@@ -1,7 +1,14 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { existsSync } from 'node:fs';
 import { findConfigPath, loadConfig, resolveOpenapiPath, isOpenapiUrl, ConfigError } from '../config/load.js';
-import { preflight, PreflightError, authStatus, authCheckScopes } from '../lark/preflight.js';
+import {
+  preflight,
+  PreflightError,
+  authStatus,
+  authCheckScopes,
+  appScopes,
+  consoleScopeApplyUrl,
+} from '../lark/preflight.js';
 import { EXIT_ENV, EXIT_OK } from '../types.js';
 
 /**
@@ -177,7 +184,8 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
         checks.push({
           name: `service:${svc.name}.docToken`,
           status: 'skipped',
-          detail: 'authoritative permission check requires real lark API call (v2)',
+          detail:
+            'docToken format looks valid; cannot confirm the wiki node exists or is writable without a real lark API call (run `sync --dry-run` once auth/scope is green to fully verify)',
         });
       }
     }
@@ -204,8 +212,16 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
     });
   }
 
-  // Scope check — authoritative via `lark-cli auth check`. Only run when we have
-  // a successful auth status. lark-cli ≥ 1.0.34 needed; older versions skip silently.
+  // Scope check — two layers:
+  //   1. user-level: `lark-cli auth check` — does the current token have the scope?
+  //   2. app-level:  `lark-cli auth scopes` — has the app on developer console
+  //                   been APPROVED for the scope?
+  // Distinguishing the two is critical: a missing scope can mean the user
+  // hasn't granted it (re-run `auth login --scope X`) OR the app itself
+  // doesn't have it enabled (must be approved on the developer console).
+  // Conflating them sends users on wild-goose chases through `auth login`
+  // failing with "permissions are already under review" — real user pain
+  // reported on the openapi-lark issue tracker.
   if (auth.ok) {
     const scopeCheck = authCheckScopes({
       scopes: SCOPES_FOR_SYNC,
@@ -225,13 +241,39 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
       });
     } else {
       const bin = loaded?.config.larkBin ?? 'lark-cli';
-      const missing = scopeCheck.missing.join(' ');
-      checks.push({
-        name: 'auth.scopes',
-        status: 'fail',
-        detail:
-          `missing scope(s): ${missing}. Run \`${bin} auth login --scope "${missing}"\` (or --recommend)`,
-      });
+      // Cross-reference with app-level scopes to give the right remediation.
+      const app = appScopes({ larkBin: loaded?.config.larkBin });
+      const appEnabled = new Set(app.userScopes);
+      const userMissingAppHas: string[] = []; // user just needs to re-login
+      const appMissing: string[] = [];        // app itself doesn't have it
+      for (const s of scopeCheck.missing) {
+        if (appEnabled.has(s)) userMissingAppHas.push(s);
+        else appMissing.push(s);
+      }
+      if (userMissingAppHas.length > 0) {
+        checks.push({
+          name: 'auth.scopes.user',
+          status: 'fail',
+          detail:
+            `user token missing: ${userMissingAppHas.join(' ')} ` +
+            `(app HAS these enabled — just re-login). Run \`${bin} auth login --scope "${userMissingAppHas.join(' ')}"\` or \`${bin} auth login --recommend\``,
+        });
+      }
+      if (appMissing.length > 0) {
+        const url =
+          app.ok && app.appId
+            ? consoleScopeApplyUrl({ appId: app.appId, brand: app.brand, scopes: appMissing })
+            : null;
+        checks.push({
+          name: 'auth.scopes.app',
+          status: 'fail',
+          detail:
+            `app does NOT have ${appMissing.join(' ')} enabled (re-running auth login won't help — needs approval on developer console).` +
+            (url
+              ? `\n      → open: ${url}`
+              : '\n      → open the Lark/Feishu developer console for this app and apply for the listed scope(s)'),
+        });
+      }
     }
   }
 

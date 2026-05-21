@@ -5,6 +5,8 @@ import {
   PreflightError,
   authStatus,
   authCheckScopes,
+  appScopes,
+  consoleScopeApplyUrl,
 } from '../src/lark/preflight.js';
 import { makeFakeLark, pathWith } from './helpers/fake-lark.js';
 
@@ -155,5 +157,62 @@ describe('authCheckScopes', () => {
       },
     });
     expect(r).toBeNull();
+  });
+});
+
+describe('appScopes', () => {
+  it('parses appId / brand / userScopes from real lark-cli output shape', () => {
+    // Real shape: "Querying app scopes...\n\n{json}"
+    const stdout =
+      'Querying app scopes...\n\n' +
+      JSON.stringify({
+        appId: 'cli_xxx',
+        brand: 'lark',
+        count: 3,
+        tokenType: 'user',
+        userScopes: ['wiki:node:read', 'wiki:node:create', 'docx:document:write_only'],
+      });
+    const r = appScopes({
+      larkBin: 'lark',
+      env: { PATH: pathWith(fakeDir), FAKE_LARK_STDOUT: stdout, FAKE_LARK_EXIT: '0' },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.appId).toBe('cli_xxx');
+    expect(r.brand).toBe('lark');
+    expect(r.userScopes).toContain('wiki:node:create');
+  });
+
+  it('returns ok=false when lark-cli exits non-zero', () => {
+    const r = appScopes({
+      larkBin: 'lark',
+      env: { PATH: pathWith(fakeDir), FAKE_LARK_STDERR: 'boom\n', FAKE_LARK_EXIT: '1' },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.userScopes).toEqual([]);
+    expect(r.reason).toMatch(/auth scopes failed/);
+  });
+});
+
+describe('consoleScopeApplyUrl', () => {
+  it('builds Feishu (default brand) URL', () => {
+    const url = consoleScopeApplyUrl({
+      appId: 'cli_abc',
+      scopes: ['wiki:node:create'],
+    });
+    expect(url).toBe(
+      'https://open.feishu.cn/page/scope-apply?clientID=cli_abc&scopes=wiki%3Anode%3Acreate',
+    );
+  });
+
+  it('uses Lark Suite host for brand="lark"', () => {
+    const url = consoleScopeApplyUrl({
+      appId: 'cli_xyz',
+      brand: 'lark',
+      scopes: ['docx:document:write_only', 'wiki:node:create'],
+    });
+    expect(url.startsWith('https://open.larksuite.com/page/scope-apply')).toBe(true);
+    expect(url).toContain('clientID=cli_xyz');
+    // scopes are space-joined then encoded → %20
+    expect(url).toContain('docx%3Adocument%3Awrite_only%20wiki%3Anode%3Acreate');
   });
 });
