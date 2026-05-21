@@ -168,7 +168,10 @@ export async function runInit(args: InitArgs): Promise<number> {
   }
 
   if (!doc.engines || typeof doc.engines !== 'object') {
-    doc.engines = { larkCli: '>=0.1.0' };
+    // `auth check` was added in lark-cli 1.0.34; doctor's real scope preflight
+    // depends on it. Lower constraints will work but with degraded UX (doctor
+    // marks scope check as skipped instead of pass/fail).
+    doc.engines = { larkCli: '>=1.0.34' };
   }
   const services = Array.isArray(doc.services)
     ? (doc.services as Array<Record<string, unknown>>)

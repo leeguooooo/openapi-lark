@@ -124,6 +124,21 @@ describe('runInit defaults', () => {
     });
   });
 
+  it('defaults engines.larkCli to >=1.0.34 on fresh init (auth check needs it)', async () => {
+    writeFileSync(
+      'api.yaml',
+      'openapi: 3.0.0\ninfo:\n  title: T\n  version: 1.0\npaths: {}\n',
+    );
+    await runInit({
+      name: 't',
+      openapi: 'api.yaml',
+      docUrl: 'https://feishu.cn/wiki/wikXYZ12345',
+      configPath: '.openapi-lark.yaml',
+    });
+    const cfg = parseYaml(readFileSync('.openapi-lark.yaml', 'utf8')) as any;
+    expect(cfg.engines.larkCli).toBe('>=1.0.34');
+  });
+
   it('omits parentTitle when openapi file is missing (URL or pre-init)', async () => {
     const code = await runInit({
       name: 'remote-svc',
