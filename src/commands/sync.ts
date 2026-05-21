@@ -29,6 +29,8 @@ export interface SyncArgs {
   pushTimeoutMs?: number;
   /** Skip hash cache; force re-push every leaf. */
   force?: boolean;
+  /** Print first 20 lines of unified diff per changed leaf (endpoint mode only). */
+  showDiff?: boolean;
 }
 
 export async function runSync(args: SyncArgs): Promise<number> {
@@ -136,6 +138,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
               force: args.force,
               lock,
               dryRun: args.dryRun,
+              showDiff: args.showDiff,
             });
             const failed = epResults.filter((r) => r.status === 'failed').length;
             const oks = epResults.filter((r) => r.status === 'ok').length;
@@ -189,6 +192,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
               timeoutMs,
               pushBytesLimit: loaded.config.maxPushBytes,
               dryRun: args.dryRun,
+              showDiff: args.showDiff,
             });
             // Aggregate tree results into a single ServiceResult for the table.
             // Detailed per-tag rows printed separately below.

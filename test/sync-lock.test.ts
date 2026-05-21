@@ -9,6 +9,8 @@ import {
   upsert,
   sha256,
   lockfilePath,
+  normalizeMarkdownForHash,
+  hashMarkdown,
 } from '../src/sync-lock.js';
 
 let dir: string;
@@ -75,6 +77,34 @@ describe('sync-lock', () => {
     expect(sha256('hello')).toBe(sha256('hello'));
     expect(sha256('hello')).not.toBe(sha256('hello!'));
     expect(sha256('hello')).toHaveLength(64);
+  });
+
+  it('normalizeMarkdownForHash: strips trailing whitespace per line', () => {
+    const a = '# Title\nparagraph    \nfoo\t\n';
+    const b = '# Title\nparagraph\nfoo\n';
+    expect(normalizeMarkdownForHash(a)).toBe(normalizeMarkdownForHash(b));
+  });
+
+  it('normalizeMarkdownForHash: converts CRLF to LF', () => {
+    const a = '# Title\r\nbody\r\n';
+    const b = '# Title\nbody\n';
+    expect(normalizeMarkdownForHash(a)).toBe(normalizeMarkdownForHash(b));
+  });
+
+  it('normalizeMarkdownForHash: collapses trailing blank lines', () => {
+    const a = '# Title\nbody\n\n\n\n';
+    const b = '# Title\nbody\n';
+    expect(normalizeMarkdownForHash(a)).toBe(normalizeMarkdownForHash(b));
+  });
+
+  it('hashMarkdown: same hash for trivially-different but semantically-equal markdown', () => {
+    const a = '# A\nbody    \n\n\n';
+    const b = '# A\r\nbody\n';
+    expect(hashMarkdown(a)).toBe(hashMarkdown(b));
+  });
+
+  it('hashMarkdown: different hash for actually-different content', () => {
+    expect(hashMarkdown('# A\nbody\n')).not.toBe(hashMarkdown('# A\nbody2\n'));
   });
 
   it('saves with stable key ordering', () => {

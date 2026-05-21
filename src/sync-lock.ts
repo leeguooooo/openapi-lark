@@ -39,6 +39,36 @@ export function sha256(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
+/**
+ * Normalize rendered markdown before hashing — kills cosmetic drift that
+ * shouldn't trigger a re-push:
+ *   - CRLF → LF (in case widdershins or downstream tool emits CRLF on Windows)
+ *   - strip trailing whitespace per line (generators sometimes emit trailing
+ *     spaces inconsistently across runs)
+ *   - collapse trailing blank lines, keep exactly one trailing newline
+ *
+ * Does NOT touch table column order, sorted keys, or content — that would
+ * silence real diffs. Field-order nondeterminism from OpenAPI generators
+ * (e.g. ogen) is upstream; use `sync --show-diff` to inspect.
+ */
+export function normalizeMarkdownForHash(md: string): string {
+  const stripped = md
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, ''))
+    .join('\n')
+    .replace(/\n+$/, '');
+  return stripped + '\n';
+}
+
+/**
+ * Hash markdown after normalization. Use this for cache lookup; keep raw
+ * `sha256()` available for tests / debugging.
+ */
+export function hashMarkdown(md: string): string {
+  return sha256(normalizeMarkdownForHash(md));
+}
+
 export function lockfilePath(basedir: string, serviceName?: string): string {
   // Lockfile is global to the project (covers all services) for simplicity.
   void serviceName;

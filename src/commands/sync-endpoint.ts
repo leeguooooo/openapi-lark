@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pLimit from 'p-limit';
 import { loadAndDereference, renderApi, RenderError } from '../renderer/index.js';
@@ -32,7 +32,7 @@ import {
   saveLock,
   lookup as lockLookup,
   upsert as lockUpsert,
-  sha256,
+  hashMarkdown,
   type SyncLockData,
 } from '../sync-lock.js';
 
@@ -56,6 +56,10 @@ export interface EndpointSyncContext {
    * the difference visible.
    */
   dryRun?: boolean;
+  /** When a leaf is detected as changed, print first N lines of unified diff
+   *  to stderr. Helps users figure out if a re-push is real change or
+   *  generator noise (e.g. ogen field-order drift). */
+  showDiff?: boolean;
 }
 
 /**
@@ -63,6 +67,37 @@ export interface EndpointSyncContext {
  * so they're identifiable in logs and impossible to confuse with real lark
  * tokens (real tokens never start with `dryrun-`).
  */
+/**
+ * Tiny line-level diff preview for `--show-diff`. Not a full Myers diff —
+ * we mark each line as added (only in `b`), removed (only in `a`), or
+ * unchanged (in both, by line content). Adequate for spotting generator
+ * noise like reordered table rows or shifted whitespace; for surgical diff
+ * users have the file on disk and can run `git diff` themselves.
+ *
+ * Output mirrors unified-diff convention: `+ added`, `- removed`.
+ * Truncated to `maxLines` non-context lines to keep stderr readable.
+ */
+export function unifiedDiffPreview(a: string, b: string, maxLines: number): string {
+  const aLines = a.split('\n');
+  const bLines = b.split('\n');
+  const aSet = new Set(aLines);
+  const bSet = new Set(bLines);
+  const out: string[] = [];
+  // First pass: anything in b that's not in a → '+'
+  // Second pass: anything in a that's not in b → '-'
+  // (Misses moves/shifts; doesn't claim to.)
+  for (const line of bLines) {
+    if (!aSet.has(line) && out.length < maxLines) out.push(`+ ${line}`);
+  }
+  for (const line of aLines) {
+    if (!bSet.has(line) && out.length < maxLines) out.push(`- ${line}`);
+  }
+  if (out.length === 0) {
+    return '  (no line-level diff — likely whitespace-only)';
+  }
+  return out.map((l) => '    ' + l).join('\n');
+}
+
 function fakeDryRunChild(title: string, parentNodeToken: string): WikiChild {
   const slug = title
     .replace(/[^a-zA-Z0-9一-鿿]+/g, '_')
@@ -534,10 +569,18 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
 
   const absPath = resolve(ctx.basedir, outRel);
   mkdirSync(resolve(absPath, '..'), { recursive: true });
+  // For --show-diff: capture the previously-written markdown BEFORE we
+  // overwrite it. The render cache lives in .openapi-lark/<svc>/ which
+  // persists across runs (gitignored). If file is missing this is a first
+  // sync for the leaf — nothing to diff against.
+  const priorRendered =
+    ctx.showDiff && existsSync(absPath) ? readFileSync(absPath, 'utf8') : null;
   writeFileSync(absPath, markdown, 'utf8');
 
-  // Hash check: skip push if content unchanged from last successful sync
-  const hash = sha256(markdown);
+  // Hash check: skip push if content unchanged from last successful sync.
+  // Uses normalized hash (CRLF / trailing-whitespace insensitive) to dampen
+  // cosmetic drift from upstream OpenAPI generators.
+  const hash = hashMarkdown(markdown);
   const prior = lockLookup(ctx.lock, ctx.service.name, docToken);
   if (!ctx.force && prior && prior.sha256 === hash && prior.title === titleForLock) {
     return {
@@ -546,6 +589,11 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
       durationMs: Date.now() - started,
       reason: `unchanged (sha256 match)`,
     };
+  }
+
+  if (ctx.showDiff && priorRendered !== null && priorRendered !== markdown) {
+    const diff = unifiedDiffPreview(priorRendered, markdown, 20);
+    process.stderr.write(`[sync] ${label}: diff (truncated to 20 lines):\n${diff}\n`);
   }
 
   const bytes = Buffer.byteLength(markdown, 'utf8');
@@ -631,10 +679,12 @@ async function pushPrebuilt(args: PushPrebuiltArgs): Promise<ServiceResult> {
 
   const absPath = resolve(ctx.basedir, outRel);
   mkdirSync(resolve(absPath, '..'), { recursive: true });
+  const priorRendered =
+    ctx.showDiff && existsSync(absPath) ? readFileSync(absPath, 'utf8') : null;
   writeFileSync(absPath, markdown, 'utf8');
 
   // Hash check: skip push if content unchanged
-  const hash = sha256(markdown);
+  const hash = hashMarkdown(markdown);
   const prior = lockLookup(ctx.lock, ctx.service.name, docToken);
   if (!ctx.force && prior && prior.sha256 === hash && prior.title === titleForLock) {
     return {
@@ -643,6 +693,10 @@ async function pushPrebuilt(args: PushPrebuiltArgs): Promise<ServiceResult> {
       durationMs: Date.now() - started,
       reason: `unchanged (sha256 match)`,
     };
+  }
+  if (ctx.showDiff && priorRendered !== null && priorRendered !== markdown) {
+    const diff = unifiedDiffPreview(priorRendered, markdown, 20);
+    process.stderr.write(`[sync] ${label}: diff (truncated to 20 lines):\n${diff}\n`);
   }
 
   const bytes = Buffer.byteLength(markdown, 'utf8');

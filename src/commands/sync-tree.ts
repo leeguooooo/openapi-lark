@@ -25,6 +25,10 @@ export interface TreeSyncContext {
   pushBytesLimit: number;
   /** Skip every write-side wiki call (createWikiChild, push). Local renders still run. */
   dryRun?: boolean;
+  /** Reserved for parity with endpoint mode; tree mode re-pushes every child
+   *  (no hash cache), so there's no "changed vs unchanged" partition to diff.
+   *  Accepted but currently unused. */
+  showDiff?: boolean;
 }
 
 function fakeDryRunChild(title: string, parentNodeToken: string): WikiChild {

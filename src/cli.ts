@@ -8,6 +8,7 @@ import { runRender } from './commands/render.js';
 import { runSync } from './commands/sync.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
+import { runInstallHook, type HookKind } from './commands/install-hook.js';
 import { EXIT_CONFIG, type Engine } from './types.js';
 import { checkCached, refreshCache } from './update/check.js';
 import { setPendingNotice, emitNoticeOnce } from './update/notice.js';
@@ -125,6 +126,7 @@ async function main(): Promise<void> {
     .option('--parallel <n>', 'max concurrent services', parsePositiveInt)
     .option('--push-timeout <ms>', 'per-service push timeout in ms', parsePositiveInt)
     .option('--force', 'ignore hash cache (sync-lock.json) and re-push every leaf')
+    .option('--show-diff', 'print first 20 lines of unified diff for each changed leaf (helps spot generator noise)')
     .action(
       async (
         service: string | undefined,
@@ -135,6 +137,7 @@ async function main(): Promise<void> {
           parallel?: number;
           pushTimeout?: number;
           force?: boolean;
+          showDiff?: boolean;
         },
       ) => {
         const code = await runSync({
@@ -145,10 +148,30 @@ async function main(): Promise<void> {
           parallel: opts.parallel,
           pushTimeoutMs: opts.pushTimeout,
           force: opts.force,
+          showDiff: opts.showDiff,
         });
         process.exit(code);
       },
     );
+
+  program
+    .command('install-hook')
+    .description('Install a git hook (post-commit or pre-push) that runs `openapi-lark sync` automatically')
+    .option('--kind <kind>', 'post-commit (default, non-blocking) | pre-push (blocks push on failure)', 'post-commit')
+    .option('--uninstall', 'remove the openapi-lark managed block from the hook')
+    .action(async (opts: { kind?: string; uninstall?: boolean }) => {
+      const kind = opts.kind === 'pre-push' ? 'pre-push' : 'post-commit';
+      if (opts.kind && opts.kind !== 'post-commit' && opts.kind !== 'pre-push') {
+        process.stderr.write(`[install-hook] unknown --kind "${opts.kind}" (use post-commit or pre-push)\n`);
+        process.exit(EXIT_CONFIG);
+      }
+      const code = await runInstallHook({
+        cwd: process.cwd(),
+        kind: kind as HookKind,
+        uninstall: opts.uninstall,
+      });
+      process.exit(code);
+    });
 
   program
     .command('doctor')
