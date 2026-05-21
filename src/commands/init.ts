@@ -1,7 +1,61 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { EXIT_CONFIG, EXIT_OK } from '../types.js';
+
+/**
+ * Cheap framework sniff for the diagnostic message printed when `--openapi`
+ * points at a missing local file. Helps users who don't yet have an OpenAPI
+ * source figure out how to expose one from their stack. Reads-only; never
+ * throws (one bad project shouldn't break init).
+ */
+export function diagnoseOpenapiSource(basedir: string): string[] {
+  const hints: string[] = [];
+  const pkgPath = resolve(basedir, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      const deps: Record<string, string> = {
+        ...(pkg.dependencies ?? {}),
+        ...(pkg.devDependencies ?? {}),
+      };
+      if (deps['chanfana'])
+        hints.push('detected chanfana — your Worker already exposes /openapi.json; use the deploy URL as services[].openapi');
+      if (deps['hono'])
+        hints.push('detected Hono — add @hono/zod-openapi (OpenAPIHono) and serve doc(/openapi.json); then use that URL as services[].openapi');
+      if (deps['@hono/zod-openapi'])
+        hints.push('detected @hono/zod-openapi — call app.doc("/openapi.json", {...}) and point services[].openapi at that URL');
+      if (deps['fastify'])
+        hints.push('detected Fastify — add @fastify/swagger to expose /openapi.json');
+      if (deps['@nestjs/core'])
+        hints.push('detected NestJS — add @nestjs/swagger and call SwaggerModule.createDocument(); /api-docs-json is the default URL');
+      if (deps['express'] && !deps['swagger-jsdoc'])
+        hints.push('detected Express (no swagger-jsdoc) — add swagger-jsdoc + swagger-ui-express to expose an OpenAPI spec');
+      if (deps['tsoa'])
+        hints.push('detected tsoa — run `tsoa spec` then point services[].openapi at the generated swagger.json');
+    } catch {
+      /* unreadable package.json — ignore */
+    }
+  }
+  if (existsSync(resolve(basedir, 'requirements.txt')) || existsSync(resolve(basedir, 'pyproject.toml'))) {
+    hints.push('detected Python project — FastAPI exposes /openapi.json by default; for Flask use flasgger; for Django use drf-spectacular');
+  }
+  if (existsSync(resolve(basedir, 'go.mod'))) {
+    hints.push('detected Go project — common OpenAPI generators: huma, swaggo/swag (`swag init` → docs/swagger.json), or gin-swagger');
+  }
+  if (existsSync(resolve(basedir, 'Cargo.toml'))) {
+    hints.push('detected Rust project — utoipa generates OpenAPI from axum/actix handlers');
+  }
+  // Heuristic: docs/ folder full of .md but no openapi → likely hand-written docs
+  if (existsSync(resolve(basedir, 'docs')) && hints.length === 0) {
+    hints.push('found a docs/ folder — openapi-lark needs an OpenAPI spec (JSON/YAML), not markdown; we can\'t auto-convert');
+  }
+  return hints;
+}
+
+function isHttpUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s);
+}
 
 /**
  * Best-effort read of `info.title` from a local OpenAPI file.
@@ -126,9 +180,29 @@ export async function runInit(args: InitArgs): Promise<number> {
     mode: 'endpoint',
     docToken,
   };
-  const openapiAbs = resolve(args.openapi);
-  const title = readOpenapiTitle(openapiAbs);
-  if (title) entry.parentTitle = title;
+  // For local file paths, sniff title from info.title and run a project-source
+  // diagnostic if the file is missing (so the user has a path forward).
+  // URL sources skip both — we don't fetch in init.
+  let title: string | null = null;
+  if (!isHttpUrl(args.openapi)) {
+    const openapiAbs = resolve(args.openapi);
+    title = readOpenapiTitle(openapiAbs);
+    if (title) entry.parentTitle = title;
+    if (!existsSync(openapiAbs)) {
+      // Diagnose against the config's basedir (where the yaml will be written).
+      // That's the project root the user is running init from.
+      const basedir = dirname(resolve(args.configPath));
+      const hints = diagnoseOpenapiSource(basedir);
+      process.stderr.write(
+        `[init] ⚠ openapi source "${args.openapi}" not found at ${openapiAbs}\n` +
+          `       The .openapi-lark.yaml will still be written so you can fix the path later.\n` +
+          (hints.length > 0
+            ? `       Suggestions for this project:\n` +
+              hints.map((h) => `         - ${h}\n`).join('')
+            : `       Or use a runtime URL: services[].openapi: https://your-app.example.com/openapi.json\n`),
+      );
+    }
+  }
   if (idx >= 0) {
     // Preserve user-edited keys not in our defaults (e.g. render.engine)
     services[idx] = { ...services[idx], ...entry };

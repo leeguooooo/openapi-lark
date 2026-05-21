@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { extractDocToken, readOpenapiTitle, runInit } from '../src/commands/init.js';
+import { extractDocToken, readOpenapiTitle, runInit, diagnoseOpenapiSource } from '../src/commands/init.js';
 
 describe('extractDocToken', () => {
   it('extracts from feishu.cn /docx/', () => {
@@ -160,5 +160,63 @@ describe('runInit defaults', () => {
       parentTitle: 'Voice Room',
       render: { engine: 'widdershins' },
     });
+  });
+});
+
+describe('diagnoseOpenapiSource', () => {
+  let workdir: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), 'openapi-lark-diag-'));
+  });
+  afterEach(() => {
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  it('detects Hono', () => {
+    writeFileSync(
+      join(workdir, 'package.json'),
+      JSON.stringify({ dependencies: { hono: '^4.0.0' } }),
+    );
+    const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('Hono'))).toBe(true);
+  });
+
+  it('detects chanfana', () => {
+    writeFileSync(
+      join(workdir, 'package.json'),
+      JSON.stringify({ dependencies: { chanfana: '^1.0.0' } }),
+    );
+    const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('chanfana'))).toBe(true);
+  });
+
+  it('detects NestJS', () => {
+    writeFileSync(
+      join(workdir, 'package.json'),
+      JSON.stringify({ dependencies: { '@nestjs/core': '^10.0.0' } }),
+    );
+    const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('NestJS'))).toBe(true);
+  });
+
+  it('detects Python via requirements.txt', () => {
+    writeFileSync(join(workdir, 'requirements.txt'), 'fastapi==0.100.0\n');
+    const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('FastAPI'))).toBe(true);
+  });
+
+  it('falls back to docs/ hint when no framework detected', () => {
+    require('node:fs').mkdirSync(join(workdir, 'docs'));
+    const hints = diagnoseOpenapiSource(workdir);
+    expect(hints.some((h) => h.includes('docs/'))).toBe(true);
+  });
+
+  it('returns empty array for unrecognized project', () => {
+    expect(diagnoseOpenapiSource(workdir)).toEqual([]);
+  });
+
+  it('survives unreadable package.json', () => {
+    writeFileSync(join(workdir, 'package.json'), '{ not valid json');
+    expect(() => diagnoseOpenapiSource(workdir)).not.toThrow();
   });
 });
