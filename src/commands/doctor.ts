@@ -1,6 +1,6 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import { existsSync } from 'node:fs';
-import { findConfigPath, loadConfig, resolveOpenapiPath, ConfigError } from '../config/load.js';
+import { findConfigPath, loadConfig, resolveOpenapiPath, isOpenapiUrl, ConfigError } from '../config/load.js';
 import { preflight, PreflightError, authStatus, authCheckScopes } from '../lark/preflight.js';
 import { EXIT_ENV, EXIT_OK } from '../types.js';
 
@@ -103,7 +103,10 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
   if (loaded) {
     for (const svc of loaded.config.services) {
       const openapiPath = resolveOpenapiPath(loaded.basedir, svc.openapi);
-      if (!existsSync(openapiPath)) {
+      const isUrl = isOpenapiUrl(openapiPath);
+      // Local file must exist on disk. URL source has no file to stat —
+      // do a HEAD probe instead so the user sees reachability + size.
+      if (!isUrl && !existsSync(openapiPath)) {
         checks.push({
           name: `service:${svc.name}.openapi`,
           status: 'fail',
@@ -111,21 +114,51 @@ export async function runDoctor(args: DoctorArgs): Promise<number> {
         });
         continue;
       }
-      try {
-        const api = await SwaggerParser.dereference(openapiPath);
-        const size = Buffer.byteLength(JSON.stringify(api), 'utf8');
-        const exceed = size > loaded.config.maxResolvedSizeBytes;
-        checks.push({
-          name: `service:${svc.name}.openapi`,
-          status: exceed ? 'fail' : 'pass',
-          detail: `resolved ${(size / 1024 / 1024).toFixed(2)} MB (limit ${(loaded.config.maxResolvedSizeBytes / 1024 / 1024).toFixed(2)} MB)`,
-        });
-      } catch (err) {
-        checks.push({
-          name: `service:${svc.name}.openapi`,
-          status: 'fail',
-          detail: (err as Error).message,
-        });
+      if (isUrl) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 10_000);
+          const res = await fetch(openapiPath, {
+            method: 'HEAD',
+            headers: svc.openapiHeaders ?? {},
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          const size = Number.parseInt(res.headers.get('content-length') ?? '', 10);
+          const sizeNote = Number.isFinite(size) && size > 0
+            ? `, ${(size / 1024).toFixed(1)} KB`
+            : '';
+          checks.push({
+            name: `service:${svc.name}.openapi`,
+            status: res.ok ? 'pass' : 'fail',
+            detail: `URL → HTTP ${res.status} ${res.statusText}${sizeNote} (HEAD probe)`,
+          });
+        } catch (err) {
+          checks.push({
+            name: `service:${svc.name}.openapi`,
+            status: 'fail',
+            detail: `URL → unreachable: ${(err as Error).message}`,
+          });
+        }
+        // Skip the dereference probe for URLs — doctor stays fast (HEAD only).
+        // Real fetch + parse happens during sync.
+      } else {
+        try {
+          const api = await SwaggerParser.dereference(openapiPath);
+          const size = Buffer.byteLength(JSON.stringify(api), 'utf8');
+          const exceed = size > loaded.config.maxResolvedSizeBytes;
+          checks.push({
+            name: `service:${svc.name}.openapi`,
+            status: exceed ? 'fail' : 'pass',
+            detail: `resolved ${(size / 1024 / 1024).toFixed(2)} MB (limit ${(loaded.config.maxResolvedSizeBytes / 1024 / 1024).toFixed(2)} MB)`,
+          });
+        } catch (err) {
+          checks.push({
+            name: `service:${svc.name}.openapi`,
+            status: 'fail',
+            detail: (err as Error).message,
+          });
+        }
       }
       // docToken format sanity check (not authoritative — only catches obvious typos)
       if (!svc.docToken) {
