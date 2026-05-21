@@ -61,16 +61,34 @@ export function preflight(input: PreflightInput): PreflightResult {
 }
 
 export interface AuthStatus {
+  /**
+   * Three-state classification (was binary in v0.2.x; expanded to avoid the
+   * v0.2.x false-positive where `needs_refresh` was reported as fail even
+   * though the refresh token is still valid and sync would have auto-refreshed
+   * on the next call).
+   *
+   *   'ok'   — tokenStatus=valid AND access token still valid
+   *   'warn' — needs_refresh / soon-to-expire BUT refresh token still valid
+   *            (sync will auto-refresh; user does NOT need to re-login)
+   *   'fail' — expired AND refresh_expired, revoked, missing, or unparseable
+   */
+  state: 'ok' | 'warn' | 'fail';
+  /** Convenience: state !== 'fail'. Callers that don't care about the warn
+   *  distinction can keep using this. */
   ok: boolean;
   /** RFC3339 — when the current access token expires */
   expiresAt?: string;
   /** ms until expiresAt; negative = already expired */
   expiresInMs?: number;
+  /** RFC3339 — when the refresh token itself expires (lark-cli reports this) */
+  refreshExpiresAt?: string;
+  /** ms until refreshExpiresAt; negative = refresh token also expired */
+  refreshExpiresInMs?: number;
   /** Space-separated scope list as reported by lark-cli */
   scopes: string[];
-  /** Raw `tokenStatus` field (lark-cli reports e.g. "valid") */
+  /** Raw `tokenStatus` field (lark-cli reports e.g. "valid", "needs_refresh") */
   tokenStatus?: string;
-  /** Human-readable reason when ok === false */
+  /** Human-readable reason — set for both warn and fail states */
   reason?: string;
 }
 
@@ -95,6 +113,7 @@ export function authStatus(input: { larkBin?: string; env?: NodeJS.ProcessEnv })
   });
   if (res.error || res.status !== 0) {
     return {
+      state: 'fail',
       ok: false,
       scopes: [],
       reason: `${bin} auth status failed: ${(res.stderr || res.stdout || (res.error as Error)?.message || 'unknown').toString().trim().slice(0, 200)}`,
@@ -105,6 +124,7 @@ export function authStatus(input: { larkBin?: string; env?: NodeJS.ProcessEnv })
     parsed = JSON.parse(res.stdout || '{}');
   } catch (err) {
     return {
+      state: 'fail',
       ok: false,
       scopes: [],
       reason: `${bin} auth status returned non-JSON: ${(err as Error).message}`,
@@ -117,30 +137,76 @@ export function authStatus(input: { larkBin?: string; env?: NodeJS.ProcessEnv })
     ? parsed.expiresAt
     : undefined;
   const expiresInMs = expiresAt ? Date.parse(expiresAt) - Date.now() : undefined;
+  const refreshExpiresAt: string | undefined = typeof parsed.refreshExpiresAt === 'string'
+    ? parsed.refreshExpiresAt
+    : undefined;
+  const refreshExpiresInMs = refreshExpiresAt
+    ? Date.parse(refreshExpiresAt) - Date.now()
+    : undefined;
   const tokenStatus: string | undefined = typeof parsed.tokenStatus === 'string'
     ? parsed.tokenStatus
     : undefined;
-  if (tokenStatus && tokenStatus !== 'valid') {
+
+  // Classify. Order matters: hard-fail states first, then warn states, then ok.
+  const base = { expiresAt, expiresInMs, refreshExpiresAt, refreshExpiresInMs, scopes, tokenStatus };
+
+  // (1) Refresh token also dead → must re-login
+  if (refreshExpiresInMs !== undefined && refreshExpiresInMs <= 0) {
     return {
+      state: 'fail',
       ok: false,
-      expiresAt,
-      expiresInMs,
-      scopes,
-      tokenStatus,
-      reason: `lark-cli token status is "${tokenStatus}" — run \`${bin} auth login\` to refresh`,
+      ...base,
+      reason: `lark-cli refresh token expired at ${refreshExpiresAt} — run \`${bin} auth login\` to re-authorize`,
     };
   }
+
+  // (2) Known terminal statuses → fail
+  const terminalStatuses = new Set(['expired', 'revoked', 'refresh_expired', 'invalid']);
+  if (tokenStatus && terminalStatuses.has(tokenStatus)) {
+    return {
+      state: 'fail',
+      ok: false,
+      ...base,
+      reason: `lark-cli token status is "${tokenStatus}" — run \`${bin} auth login\` to re-authorize`,
+    };
+  }
+
+  // (3) needs_refresh + refresh token still valid → WARN (sync will auto-refresh,
+  //     no need to bother the user; making this a hard fail was the v0.2.x bug
+  //     that misled users into auth login → app-pending-approval dead ends).
+  if (tokenStatus === 'needs_refresh') {
+    return {
+      state: 'warn',
+      ok: true,
+      ...base,
+      reason: refreshExpiresAt
+        ? `token needs refresh (sync will auto-refresh next call; refresh token valid until ${refreshExpiresAt})`
+        : `token needs refresh (sync will auto-refresh next call)`,
+    };
+  }
+
+  // (4) Any other unknown non-"valid" tokenStatus → warn but don't fail; user
+  //     might be on a newer lark-cli with new states we haven't accounted for.
+  if (tokenStatus && tokenStatus !== 'valid') {
+    return {
+      state: 'warn',
+      ok: true,
+      ...base,
+      reason: `lark-cli reports tokenStatus="${tokenStatus}" — unknown to openapi-lark, allowing through; report at https://github.com/leeguooooo/openapi-lark/issues if sync fails`,
+    };
+  }
+
+  // (5) Hard expiry on access token (despite tokenStatus=valid). Defensive.
   if (expiresInMs !== undefined && expiresInMs <= 0) {
     return {
+      state: 'fail',
       ok: false,
-      expiresAt,
-      expiresInMs,
-      scopes,
-      tokenStatus,
+      ...base,
       reason: `lark-cli token expired at ${expiresAt} — run \`${bin} auth login\` to refresh`,
     };
   }
-  return { ok: true, expiresAt, expiresInMs, scopes, tokenStatus };
+  // (6) tokenStatus=valid and not expired → ok
+  return { state: 'ok', ok: true, ...base };
 }
 
 export interface ScopeCheckResult {

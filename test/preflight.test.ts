@@ -73,7 +73,7 @@ describe('preflight', () => {
 });
 
 describe('authStatus', () => {
-  it('returns ok with parsed scopes / expiresAt', () => {
+  it('state=ok when tokenStatus=valid and not expired', () => {
     const future = new Date(Date.now() + 24 * 3600_000).toISOString();
     const r = authStatus({
       larkBin: 'lark',
@@ -82,18 +82,92 @@ describe('authStatus', () => {
         FAKE_LARK_STDOUT: JSON.stringify({
           tokenStatus: 'valid',
           expiresAt: future,
+          refreshExpiresAt: future,
           scope: 'wiki:node:read wiki:node:create docx:document:write_only',
         }),
         FAKE_LARK_EXIT: '0',
       },
     });
+    expect(r.state).toBe('ok');
     expect(r.ok).toBe(true);
     expect(r.scopes).toContain('wiki:node:create');
     expect(r.expiresInMs).toBeGreaterThan(0);
-    expect(r.tokenStatus).toBe('valid');
   });
 
-  it('returns ok=false when token expired', () => {
+  it('state=warn when needs_refresh but refresh token still valid', () => {
+    const future = new Date(Date.now() + 7 * 24 * 3600_000).toISOString();
+    const r = authStatus({
+      larkBin: 'lark',
+      env: {
+        PATH: pathWith(fakeDir),
+        FAKE_LARK_STDOUT: JSON.stringify({
+          tokenStatus: 'needs_refresh',
+          expiresAt: new Date(Date.now() - 3600_000).toISOString(), // access expired
+          refreshExpiresAt: future,                                  // refresh OK
+          scope: '',
+        }),
+        FAKE_LARK_EXIT: '0',
+      },
+    });
+    expect(r.state).toBe('warn');
+    expect(r.ok).toBe(true); // important: callers using .ok shouldn't see this as failure
+    expect(r.reason).toMatch(/auto-refresh/);
+  });
+
+  it('state=fail when refresh token also expired', () => {
+    const past = new Date(Date.now() - 24 * 3600_000).toISOString();
+    const r = authStatus({
+      larkBin: 'lark',
+      env: {
+        PATH: pathWith(fakeDir),
+        FAKE_LARK_STDOUT: JSON.stringify({
+          tokenStatus: 'needs_refresh',
+          expiresAt: past,
+          refreshExpiresAt: past, // both dead
+          scope: '',
+        }),
+        FAKE_LARK_EXIT: '0',
+      },
+    });
+    expect(r.state).toBe('fail');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/re-authorize/);
+  });
+
+  it('state=fail for revoked tokenStatus', () => {
+    const r = authStatus({
+      larkBin: 'lark',
+      env: {
+        PATH: pathWith(fakeDir),
+        FAKE_LARK_STDOUT: JSON.stringify({ tokenStatus: 'revoked', scope: '' }),
+        FAKE_LARK_EXIT: '0',
+      },
+    });
+    expect(r.state).toBe('fail');
+    expect(r.reason).toMatch(/revoked/);
+  });
+
+  it('state=warn for unknown future tokenStatus (forward compat)', () => {
+    const future = new Date(Date.now() + 24 * 3600_000).toISOString();
+    const r = authStatus({
+      larkBin: 'lark',
+      env: {
+        PATH: pathWith(fakeDir),
+        FAKE_LARK_STDOUT: JSON.stringify({
+          tokenStatus: 'pending_2fa',
+          expiresAt: future,
+          refreshExpiresAt: future,
+          scope: '',
+        }),
+        FAKE_LARK_EXIT: '0',
+      },
+    });
+    expect(r.state).toBe('warn');
+    expect(r.ok).toBe(true);
+    expect(r.reason).toMatch(/unknown to openapi-lark/);
+  });
+
+  it('state=fail when access token expired (tokenStatus=valid but stale)', () => {
     const past = new Date(Date.now() - 24 * 3600_000).toISOString();
     const r = authStatus({
       larkBin: 'lark',
@@ -103,21 +177,8 @@ describe('authStatus', () => {
         FAKE_LARK_EXIT: '0',
       },
     });
-    expect(r.ok).toBe(false);
+    expect(r.state).toBe('fail');
     expect(r.reason).toMatch(/expired/);
-  });
-
-  it('returns ok=false when tokenStatus is not valid', () => {
-    const r = authStatus({
-      larkBin: 'lark',
-      env: {
-        PATH: pathWith(fakeDir),
-        FAKE_LARK_STDOUT: JSON.stringify({ tokenStatus: 'revoked', scope: '' }),
-        FAKE_LARK_EXIT: '0',
-      },
-    });
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/revoked/);
   });
 });
 
