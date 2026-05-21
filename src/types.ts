@@ -1,6 +1,14 @@
 export interface ServiceConfig {
   name: string;
+  /** Local path OR http(s):// URL. URLs let us pull runtime-generated specs
+   *  from chanfana / Hono / FastAPI / NestJS Swagger without a stale snapshot file. */
   openapi: string;
+  /** Headers sent when `openapi` is a URL. `${ENV_VAR}` interpolation is
+   *  performed by the config loader so secrets stay out of the file. */
+  openapiHeaders?: Record<string, string>;
+  /** When `openapi` is a URL, write the raw fetched JSON to this path each sync.
+   *  Lets you commit it to git for PR diff review. */
+  openapiSnapshot?: string;
   /** Wiki node token serving as the per-service parent docx. Optional when
    *  top-level `parentDocToken` is set — a child node will be auto-created
    *  on first sync and its token persisted to .openapi-lark/auto-tokens.json. */

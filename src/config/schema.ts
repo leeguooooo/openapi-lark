@@ -14,7 +14,25 @@ export const RenderSchema = z.object({
 
 export const ServiceSchema = z.object({
   name: z.string().min(1, 'service.name is required'),
+  /**
+   * Local file path OR http(s):// URL. URLs cover runtime-generated OpenAPI
+   * (chanfana / Hono / FastAPI / NestJS Swagger) — no more stale curl snapshots.
+   * When URL → also see `openapiHeaders` (for auth) and `openapiSnapshot` (for git diff).
+   */
   openapi: z.string().min(1, 'service.openapi is required'),
+  /**
+   * Headers sent when `openapi` is a URL. `${ENV_VAR}` interpolation runs in
+   * the config loader so secrets stay out of the file:
+   *   openapiHeaders:
+   *     Authorization: "Bearer ${OPENAPI_TOKEN}"
+   * Ignored when `openapi` is a local path.
+   */
+  openapiHeaders: z.record(z.string()).optional(),
+  /**
+   * When `openapi` is a URL, write the raw fetched JSON to this path each sync.
+   * Lets you commit the snapshot to git for PR diff review. Ignored for local paths.
+   */
+  openapiSnapshot: z.string().min(1).optional(),
   docToken: z.string().min(1).optional(),
   mode: z.enum(['single', 'tree', 'endpoint']).default('single'),
   tagAliases: z.record(z.string()).optional(),

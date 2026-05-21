@@ -135,6 +135,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
               pushBytesLimit: loaded.config.maxPushBytes,
               force: args.force,
               lock,
+              dryRun: args.dryRun,
             });
             const failed = epResults.filter((r) => r.status === 'failed').length;
             const oks = epResults.filter((r) => r.status === 'ok').length;
@@ -187,6 +188,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
               parallelChildren: parallel,
               timeoutMs,
               pushBytesLimit: loaded.config.maxPushBytes,
+              dryRun: args.dryRun,
             });
             // Aggregate tree results into a single ServiceResult for the table.
             // Detailed per-tag rows printed separately below.
@@ -228,6 +230,12 @@ export async function runSync(args: SyncArgs): Promise<number> {
             openapiPath,
             engine,
             maxResolvedSizeBytes: loaded.config.maxResolvedSizeBytes,
+            urlOpts: {
+              headers: svc.openapiHeaders,
+              snapshotAbsPath: svc.openapiSnapshot
+                ? resolve(loaded.basedir, svc.openapiSnapshot)
+                : undefined,
+            },
           });
           // Group identical heading-jump warnings so 200 widdershins-emitted
           // "Enumerated Values" lines collapse to one summary row.

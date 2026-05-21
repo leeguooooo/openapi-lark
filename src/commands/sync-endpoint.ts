@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pLimit from 'p-limit';
 import { loadAndDereference, renderApi, RenderError } from '../renderer/index.js';
+import { resolveOpenapiPath } from '../config/load.js';
 import {
   splitByEndpoint,
   splitByTag,
@@ -47,6 +48,34 @@ export interface EndpointSyncContext {
   force?: boolean;
   /** Shared mutable lockfile data; saved by caller after sync. */
   lock: SyncLockData;
+  /**
+   * Skip every write-side wiki call (createWikiChild, push, lockUpsert).
+   * Read-side calls (resolveWikiNode, listWikiChildren) still run so the
+   * caller can see what would be recycled vs. created. Local markdown is
+   * still rendered + written to disk. Logs are prefixed `(would)` to make
+   * the difference visible.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * Build a fake WikiChild for dry-run mode. The tokens carry a `dryrun-` prefix
+ * so they're identifiable in logs and impossible to confuse with real lark
+ * tokens (real tokens never start with `dryrun-`).
+ */
+function fakeDryRunChild(title: string, parentNodeToken: string): WikiChild {
+  const slug = title
+    .replace(/[^a-zA-Z0-9一-鿿]+/g, '_')
+    .slice(0, 24)
+    .toLowerCase() || 'untitled';
+  const suffix = parentNodeToken.slice(-6) || 'root';
+  return {
+    nodeToken: `dryrun-node-${slug}-${suffix}`,
+    objToken: `dryrun-doc-${slug}-${suffix}`,
+    title,
+    objType: 'docx',
+    hasChild: false,
+  };
 }
 
 /**
@@ -81,16 +110,27 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       },
     ];
   }
+  if (ctx.dryRun) {
+    process.stdout.write(
+      `[sync] ${svc.name}: ⚠ DRY-RUN — wiki nodes will NOT be created/updated; local renders only\n`,
+    );
+  }
   process.stdout.write(
     `[sync] ${svc.name}: wiki parent resolved (space=${parent.spaceId}, title="${parent.title}")\n`,
   );
 
-  const openapiPath = resolve(ctx.basedir, svc.openapi);
+  const openapiPath = resolveOpenapiPath(ctx.basedir, svc.openapi);
   let api: unknown;
   try {
     ({ api } = await loadAndDereference(
       openapiPath,
       ctx.config.maxResolvedSizeBytes ?? DEFAULT_MAX_RESOLVED_SIZE_BYTES,
+      {
+        headers: svc.openapiHeaders,
+        snapshotAbsPath: svc.openapiSnapshot
+          ? resolve(ctx.basedir, svc.openapiSnapshot)
+          : undefined,
+      },
     ));
   } catch (err) {
     return [
@@ -156,21 +196,28 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     const tagTitle = titleForTag(tagId, api, svc.tagAliases);
     let tagNode = popFromPool(tagPool, tagTitle);
     if (!tagNode) {
-      try {
-        tagNode = createWikiChild(parent.spaceId, parent.nodeToken, tagTitle, larkBin);
-        process.stdout.write(`[sync] ${svc.name}: created tag node "${tagTitle}"\n`);
-      } catch (err) {
-        results.push({
-          service: `${svc.name} :: ${tagId}`,
-          status: 'failed',
-          durationMs: 0,
-          reason: `createWikiChild(tag) failed: ${(err as Error).message}`,
-        });
-        continue;
+      if (ctx.dryRun) {
+        tagNode = fakeDryRunChild(tagTitle, parent.nodeToken);
+        process.stdout.write(
+          `[sync] ${svc.name}: (would) create tag node "${tagTitle}"\n`,
+        );
+      } else {
+        try {
+          tagNode = createWikiChild(parent.spaceId, parent.nodeToken, tagTitle, larkBin);
+          process.stdout.write(`[sync] ${svc.name}: created tag node "${tagTitle}"\n`);
+        } catch (err) {
+          results.push({
+            service: `${svc.name} :: ${tagId}`,
+            status: 'failed',
+            durationMs: 0,
+            reason: `createWikiChild(tag) failed: ${(err as Error).message}`,
+          });
+          continue;
+        }
       }
     } else {
       process.stdout.write(
-        `[sync] ${svc.name}: recycled tag node ${tagNode.nodeToken} (was "${tagNode.title}") -> "${tagTitle}"\n`,
+        `[sync] ${svc.name}: ${ctx.dryRun ? '(would) recycle' : 'recycled'} tag node ${tagNode.nodeToken} (was "${tagNode.title}") -> "${tagTitle}"\n`,
       );
     }
 
@@ -191,18 +238,23 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       }),
     );
 
-    // List existing endpoint leaves under this tag
+    // List existing endpoint leaves under this tag.
+    // If we faked the tag node in dry-run, there are no real children to list.
     let leafChildren: WikiChild[];
-    try {
-      leafChildren = listWikiChildren(parent.spaceId, tagNode.nodeToken, larkBin);
-    } catch (err) {
-      results.push({
-        service: `${svc.name} :: ${tagId}`,
-        status: 'failed',
-        durationMs: 0,
-        reason: `listWikiChildren(leaf-level) failed: ${(err as Error).message}`,
-      });
-      continue;
+    if (tagNode.nodeToken.startsWith('dryrun-')) {
+      leafChildren = [];
+    } else {
+      try {
+        leafChildren = listWikiChildren(parent.spaceId, tagNode.nodeToken, larkBin);
+      } catch (err) {
+        results.push({
+          service: `${svc.name} :: ${tagId}`,
+          status: 'failed',
+          durationMs: 0,
+          reason: `listWikiChildren(leaf-level) failed: ${(err as Error).message}`,
+        });
+        continue;
+      }
     }
     const leafPool = poolByTitle(leafChildren);
 
@@ -250,38 +302,50 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       // Find or create the group intermediate node under the tag
       let groupNode = popFromPool(leafPool, groupTitle);
       if (!groupNode) {
-        try {
-          groupNode = createWikiChild(
-            parent.spaceId,
-            tagNode!.nodeToken,
-            groupTitle,
-            larkBin,
-          );
+        if (ctx.dryRun) {
+          groupNode = fakeDryRunChild(groupTitle, tagNode!.nodeToken);
           process.stdout.write(
-            `[sync] ${svc.name}: created group node "${groupTitle}" (under ${tagId})\n`,
+            `[sync] ${svc.name}: (would) create group node "${groupTitle}" (under ${tagId})\n`,
           );
+        } else {
+          try {
+            groupNode = createWikiChild(
+              parent.spaceId,
+              tagNode!.nodeToken,
+              groupTitle,
+              larkBin,
+            );
+            process.stdout.write(
+              `[sync] ${svc.name}: created group node "${groupTitle}" (under ${tagId})\n`,
+            );
+          } catch (err) {
+            leafResults.push({
+              service: `${svc.name} :: ${tagId} :: ${groupTitle}`,
+              status: 'failed',
+              durationMs: 0,
+              reason: `createWikiChild(group) failed: ${(err as Error).message}`,
+            });
+            continue;
+          }
+        }
+      }
+      // List existing endpoint leaves under THIS group node.
+      // If we faked the group node in dry-run, there are no real children to list.
+      let groupLeafChildren: WikiChild[];
+      if (groupNode.nodeToken.startsWith('dryrun-')) {
+        groupLeafChildren = [];
+      } else {
+        try {
+          groupLeafChildren = listWikiChildren(parent.spaceId, groupNode.nodeToken, larkBin);
         } catch (err) {
           leafResults.push({
             service: `${svc.name} :: ${tagId} :: ${groupTitle}`,
             status: 'failed',
             durationMs: 0,
-            reason: `createWikiChild(group) failed: ${(err as Error).message}`,
+            reason: `listWikiChildren(group-level) failed: ${(err as Error).message}`,
           });
           continue;
         }
-      }
-      // List existing endpoint leaves under THIS group node
-      let groupLeafChildren: WikiChild[];
-      try {
-        groupLeafChildren = listWikiChildren(parent.spaceId, groupNode.nodeToken, larkBin);
-      } catch (err) {
-        leafResults.push({
-          service: `${svc.name} :: ${tagId} :: ${groupTitle}`,
-          status: 'failed',
-          durationMs: 0,
-          reason: `listWikiChildren(group-level) failed: ${(err as Error).message}`,
-        });
-        continue;
       }
       const groupLeafPool = poolByTitle(groupLeafChildren);
       // Push the group intermediate doc itself (just a TOC)
@@ -339,15 +403,19 @@ async function pushEndpointLeaf(args: {
   const leafTitle = titleForEndpoint(slice);
   let leaf = popFromPool(pool, leafTitle);
   if (!leaf) {
-    try {
-      leaf = createWikiChild(parentSpaceId, parentNodeToken, leafTitle, larkBin);
-    } catch (err) {
-      return {
-        service: `${svcName} :: ${tagId}${labelPrefixExtra ?? ''} :: ${leafTitle}`,
-        status: 'failed' as const,
-        durationMs: 0,
-        reason: `createWikiChild(leaf) failed: ${(err as Error).message}`,
-      };
+    if (ctx.dryRun) {
+      leaf = fakeDryRunChild(leafTitle, parentNodeToken);
+    } else {
+      try {
+        leaf = createWikiChild(parentSpaceId, parentNodeToken, leafTitle, larkBin);
+      } catch (err) {
+        return {
+          service: `${svcName} :: ${tagId}${labelPrefixExtra ?? ''} :: ${leafTitle}`,
+          status: 'failed' as const,
+          durationMs: 0,
+          reason: `createWikiChild(leaf) failed: ${(err as Error).message}`,
+        };
+      }
     }
   }
   return renderAndPush({
@@ -457,6 +525,15 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
         `(${(ctx.pushBytesLimit / 1024).toFixed(0)} KB). Local md: ${absPath}`,
     };
   }
+  if (ctx.dryRun) {
+    // Skip push + lockUpsert. Local md already written above.
+    return {
+      service: label,
+      status: 'ok',
+      durationMs: Date.now() - started,
+      reason: `(dry-run) wrote ${absPath}; would push ${(bytes / 1024).toFixed(1)} KB`,
+    };
+  }
   const pushed = push({
     docToken,
     mdPath: outRel,
@@ -541,6 +618,14 @@ async function pushPrebuilt(args: PushPrebuiltArgs): Promise<ServiceResult> {
       status: 'failed',
       durationMs: Date.now() - started,
       reason: `rendered ${(bytes / 1024).toFixed(0)} KB exceeds maxPushBytes`,
+    };
+  }
+  if (ctx.dryRun) {
+    return {
+      service: label,
+      status: 'ok',
+      durationMs: Date.now() - started,
+      reason: `(dry-run) wrote ${absPath}; would push ${(bytes / 1024).toFixed(1)} KB`,
     };
   }
   const pushed = push({

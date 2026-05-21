@@ -1,9 +1,12 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import SwaggerParser from '@apidevtools/swagger-parser';
 import type { Engine } from '../types.js';
 import { renderWiddershins } from './widdershins/render.js';
 import type { HeadingWarning } from './heading-check.js';
 import { EXIT_CONFIG } from '../types.js';
 import { flattenAllOfInApi } from './flatten-allof.js';
+import { isOpenapiUrl } from '../config/load.js';
 
 export class RenderError extends Error {
   exitCode = EXIT_CONFIG;
@@ -17,6 +20,8 @@ export interface RenderRequest {
   openapiPath: string;
   engine: Engine;
   maxResolvedSizeBytes: number;
+  /** Forwarded to loadAndDereference when openapiPath is a URL */
+  urlOpts?: OpenapiSourceOptions;
 }
 
 export interface RenderResponse {
@@ -46,18 +51,90 @@ export async function renderApi(
   return renderWiddershins({ api, singleOperationSummary });
 }
 
+export interface OpenapiSourceOptions {
+  /** Headers for URL fetch — usually for `Authorization: Bearer ${TOKEN}` */
+  headers?: Record<string, string>;
+  /** When the source is a URL, write the raw fetched JSON to this absolute path */
+  snapshotAbsPath?: string;
+  /** Fetch timeout in ms; default 30s */
+  fetchTimeoutMs?: number;
+}
+
 /**
- * Load + dereference openapi from path, then render with size guard.
+ * Fetch a remote OpenAPI document. Returns the raw text + Content-Type so the
+ * caller can decide JSON vs YAML parsing. No retries — we surface failures
+ * fast and let the user decide.
+ */
+async function fetchOpenapi(
+  url: string,
+  opts: OpenapiSourceOptions,
+): Promise<{ text: string; contentType: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.fetchTimeoutMs ?? 30_000);
+  try {
+    const res = await fetch(url, {
+      headers: opts.headers ?? {},
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new RenderError(
+        `fetch ${url} failed: HTTP ${res.status} ${res.statusText}`,
+      );
+    }
+    const text = await res.text();
+    return { text, contentType: res.headers.get('content-type') ?? '' };
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      throw new RenderError(`fetch ${url} timed out after ${opts.fetchTimeoutMs ?? 30_000}ms`);
+    }
+    if (err instanceof RenderError) throw err;
+    throw new RenderError(`fetch ${url} failed: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Load + dereference openapi from path OR URL, then size-guard.
  * Used by single mode and `render` command.
+ *
+ * For URLs:
+ *  - Always fetches with our own client (so headers + snapshot work)
+ *  - SwaggerParser receives the parsed object; **external $refs to OTHER URLs
+ *    are not resolved** (limitation: the bundled openapi.json from chanfana/
+ *    Hono/FastAPI is normally self-contained, so this rarely matters)
+ *
+ * For local paths: existing behavior (delegates to SwaggerParser).
  */
 export async function loadAndDereference(
   openapiPath: string,
   maxResolvedSizeBytes: number,
+  urlOpts?: OpenapiSourceOptions,
 ): Promise<{ api: unknown; resolvedSizeBytes: number }> {
   let api: any;
   try {
-    api = await SwaggerParser.dereference(openapiPath);
+    if (isOpenapiUrl(openapiPath)) {
+      const { text } = await fetchOpenapi(openapiPath, urlOpts ?? {});
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // YAML fallback — chanfana/Hono almost always JSON; FastAPI optional yaml endpoint
+        const yaml = await import('yaml');
+        parsed = yaml.parse(text);
+      }
+      // Snapshot — write BEFORE dereference so a broken spec still leaves a diffable file
+      if (urlOpts?.snapshotAbsPath) {
+        const pretty = JSON.stringify(parsed, null, 2);
+        mkdirSync(dirname(urlOpts.snapshotAbsPath), { recursive: true });
+        writeFileSync(urlOpts.snapshotAbsPath, pretty, 'utf8');
+      }
+      api = await SwaggerParser.dereference(parsed as any);
+    } else {
+      api = await SwaggerParser.dereference(openapiPath);
+    }
   } catch (err) {
+    if (err instanceof RenderError) throw err;
     throw new RenderError(
       `failed to load/dereference openapi at ${openapiPath}: ${(err as Error).message}`,
     );
@@ -96,6 +173,7 @@ export async function render(req: RenderRequest): Promise<RenderResponse> {
   const { api, resolvedSizeBytes } = await loadAndDereference(
     req.openapiPath,
     req.maxResolvedSizeBytes,
+    req.urlOpts,
   );
   const out = await renderWiddershins({ api });
   return {

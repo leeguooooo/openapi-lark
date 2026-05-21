@@ -220,8 +220,17 @@ export function loadConfig(opts: LoadOptions): LoadResult {
 }
 
 /**
+ * True when the openapi source is an http(s) URL (vs. local path).
+ */
+export function isOpenapiUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s);
+}
+
+/**
  * Resolve a service's openapi path relative to the config basedir.
+ * Returns URLs unchanged so callers can pass them through to fetch.
  */
 export function resolveOpenapiPath(basedir: string, openapi: string): string {
+  if (isOpenapiUrl(openapi)) return openapi;
   return isAbsolute(openapi) ? openapi : resolve(basedir, openapi);
 }

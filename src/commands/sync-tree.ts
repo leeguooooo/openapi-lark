@@ -5,7 +5,8 @@ import { loadAndDereference, renderApi, RenderError } from '../renderer/index.js
 import { splitByTag, titleForTag } from '../renderer/split-by-tag.js';
 import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { push } from '../lark/push.js';
-import { resolveWikiNode, listWikiChildren, createWikiChild, WikiError } from '../lark/wiki.js';
+import { resolveWikiNode, listWikiChildren, createWikiChild, WikiError, type WikiChild } from '../lark/wiki.js';
+import { resolveOpenapiPath } from '../config/load.js';
 import {
   DEFAULT_MAX_RESOLVED_SIZE_BYTES,
   type Config,
@@ -22,6 +23,23 @@ export interface TreeSyncContext {
   parallelChildren: number;
   timeoutMs: number;
   pushBytesLimit: number;
+  /** Skip every write-side wiki call (createWikiChild, push). Local renders still run. */
+  dryRun?: boolean;
+}
+
+function fakeDryRunChild(title: string, parentNodeToken: string): WikiChild {
+  const slug = title
+    .replace(/[^a-zA-Z0-9一-鿿]+/g, '_')
+    .slice(0, 24)
+    .toLowerCase() || 'untitled';
+  const suffix = parentNodeToken.slice(-6) || 'root';
+  return {
+    nodeToken: `dryrun-node-${slug}-${suffix}`,
+    objToken: `dryrun-doc-${slug}-${suffix}`,
+    title,
+    objType: 'docx',
+    hasChild: false,
+  };
 }
 
 /**
@@ -55,17 +73,28 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
       },
     ];
   }
+  if (ctx.dryRun) {
+    process.stdout.write(
+      `[sync] ${svc.name}: ⚠ DRY-RUN — wiki nodes will NOT be created/updated; local renders only\n`,
+    );
+  }
   process.stdout.write(
     `[sync] ${svc.name}: wiki parent resolved (space=${parent.spaceId}, title="${parent.title}")\n`,
   );
 
   // Step 2: load openapi + split
-  const openapiPath = resolve(ctx.basedir, svc.openapi);
+  const openapiPath = resolveOpenapiPath(ctx.basedir, svc.openapi);
   let api: unknown;
   try {
     ({ api } = await loadAndDereference(
       openapiPath,
       ctx.config.maxResolvedSizeBytes ?? DEFAULT_MAX_RESOLVED_SIZE_BYTES,
+      {
+        headers: svc.openapiHeaders,
+        snapshotAbsPath: svc.openapiSnapshot
+          ? resolve(ctx.basedir, svc.openapiSnapshot)
+          : undefined,
+      },
     ));
   } catch (err) {
     return [
@@ -153,6 +182,14 @@ export async function runTreeSync(ctx: TreeSyncContext): Promise<ServiceResult[]
     const existing = claimChild(title);
     if (existing) {
       claimed.push({ tagId, title, docToken: existing.objToken, created: false });
+      continue;
+    }
+    if (ctx.dryRun) {
+      const fake = fakeDryRunChild(title, parent.nodeToken);
+      claimed.push({ tagId, title, docToken: fake.objToken, created: true });
+      process.stdout.write(
+        `[sync] ${svc.name}: (would) create child node "${title}"\n`,
+      );
       continue;
     }
     try {
@@ -253,6 +290,15 @@ async function renderAndPush(args: RenderAndPushArgs): Promise<ServiceResult> {
         `rendered ${(bytes / 1024).toFixed(0)} KB exceeds maxPushBytes ` +
         `(${(ctx.pushBytesLimit / 1024).toFixed(0)} KB) — split further by tag or raise the limit. ` +
         `Local md: ${absPath}`,
+    };
+  }
+
+  if (ctx.dryRun) {
+    return {
+      service: label,
+      status: 'ok',
+      durationMs: Date.now() - started,
+      reason: `(dry-run) wrote ${absPath}; would push ${(bytes / 1024).toFixed(1)} KB`,
     };
   }
 
