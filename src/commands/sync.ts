@@ -7,6 +7,7 @@ import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { runTreeSync } from './sync-tree.js';
 import { runEndpointSync } from './sync-endpoint.js';
 import { loadLock, saveLock } from '../sync-lock.js';
+import { loadNodeMap, saveNodeMap } from '../node-map.js';
 import { resolveDocTokens } from './resolve-doctokens.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
 import { push } from '../lark/push.js';
@@ -111,6 +112,10 @@ export async function runSync(args: SyncArgs): Promise<number> {
 
   // Lockfile: shared across all services in this run. Loaded once, saved once at end.
   const lock = loadLock(loaded.basedir);
+  // Stable identity map: tagId/groupKey/METHOD-path → wiki nodeToken.
+  // Survives summary / tagAlias changes that used to leave zombie wiki nodes.
+  // See src/node-map.ts.
+  const nodeMap = loadNodeMap(loaded.basedir);
 
   await Promise.all(
     services.map((svc, idx) =>
@@ -137,6 +142,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
               pushBytesLimit: loaded.config.maxPushBytes,
               force: args.force,
               lock,
+              nodeMap,
               dryRun: args.dryRun,
               showDiff: args.showDiff,
             });
@@ -334,6 +340,14 @@ export async function runSync(args: SyncArgs): Promise<number> {
     } catch (err) {
       process.stderr.write(
         `[sync] warning: failed to save lockfile: ${(err as Error).message}\n`,
+      );
+    }
+    // Persist identity → nodeToken map for stable recycling across summary/alias drift.
+    try {
+      saveNodeMap(loaded.basedir, nodeMap);
+    } catch (err) {
+      process.stderr.write(
+        `[sync] warning: failed to save node-map: ${(err as Error).message}\n`,
       );
     }
   }

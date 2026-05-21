@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — 稳定身份匹配，根治 zombie wiki 节点
+
+修复 sync 改 OpenAPI `summary` / `tagAlias` 会产生 zombie wiki 节点的 bug。
+现在 sync 用 spec 派生的稳定身份键作为 join key，title 只是显示。
+
+### 修复 / 行为变化
+
+- **叶子节点身份键 = `METHOD + path`**：以前用整个 title 做匹配，summary 一改就 miss 然后 createWikiChild 新建 + 留旧节点。现在 cascade 匹配：`node-map.json` 已知 nodeToken → 从已有 title 抽 `METHOD path` → 旧 title 完全匹配 → 创建新节点。匹配上以后如果 title 不同，下推时传 `--new-title` 把 wiki 侧边栏标题改过来。
+- **Tag / Group 中间节点持久化身份**：新增 `.openapi-lark/node-map.json`（gitignored，与 sync-lock 同目录）维护 `tagId → nodeToken` / `tagId/groupKey → nodeToken` 映射。`tagAliases` 改名时不再造 zombie tag。
+- **`push()` 始终传 `--new-title`**：endpoint 模式下每次 docs +update 都强制锁定 wiki 节点 + docx 标题为 spec 派生值，避免 lark-cli 的 overwrite 模式从 markdown body 里挑 H1 当标题导致漂移。
+- **末尾 zombie 报告**：sync 结束后 stderr 列出 pool 里未被认领的旧节点（标题 / nodeToken / wiki URL），方便人工 review 是否真的过时。不自动删，要清理就去 wiki 手动 archive。
+- **`.openapi-lark/node-map.json` 不进 git**：跟 sync-lock / auto-tokens 一样 per-project local。第一次 sync 时通过 title 抽 `METHOD path` 回填，能覆盖大多数升级场景。
+
+### 新文件
+
+- `src/node-map.ts` + `test/node-map.test.ts`（14 tests）
+- `src/lark/child-pool.ts` + `test/child-pool.test.ts`（12 tests）
+
+### 影响面
+
+- 用户首次 sync 时 leaf 通过 title 抽身份回填 node-map；若 title 完全不可解析（曾被手动改过），fallback 到原有 title 匹配，最坏不会比当前更差。
+- `--new-title` 需要 lark-cli >= 1.0.32（init 已强制 >=1.0.34）。
+- **本次只修了 `mode: endpoint`**。`mode: tree` / 单文件模式的同名问题（tagAlias 改名造 tag zombie）作为后续 issue 处理。endpoint 模式是当前主力场景，tree 模式的中间节点数远少于 endpoint 的叶子节点数，影响面小。
+
+### Test
+
+`pnpm test` 241 全过；`tsc --noEmit` 干净；`npm run build` 干净。
+
 ## 0.1.0 — 2026-05-20
 
 First release. OpenAPI → 飞书 docx 文档同步工具。Lark-native API platform 的第一块拼图，替代 yapi 接口文档管线。

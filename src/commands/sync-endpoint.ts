@@ -21,6 +21,23 @@ import {
   type WikiChild,
 } from '../lark/wiki.js';
 import {
+  buildChildPool,
+  popByCascade,
+  remainingChildren,
+  type ChildPool,
+} from '../lark/child-pool.js';
+import {
+  endpointIdentity,
+  extractEndpointIdentity,
+  getGroupNode,
+  getLeafNode,
+  getTagNode,
+  setGroupNode,
+  setLeafNode,
+  setTagNode,
+  type NodeMapData,
+} from '../node-map.js';
+import {
   DEFAULT_MAX_RESOLVED_SIZE_BYTES,
   type Config,
   type ServiceConfig,
@@ -48,6 +65,11 @@ export interface EndpointSyncContext {
   force?: boolean;
   /** Shared mutable lockfile data; saved by caller after sync. */
   lock: SyncLockData;
+  /** Shared mutable node-map data; saved by caller after sync. Maps
+   *  spec-derived identity keys (tagId, groupKey, METHOD path) to wiki
+   *  nodeTokens — survives summary / tagAlias changes that used to leave
+   *  zombie wiki nodes behind. See src/node-map.ts. */
+  nodeMap: NodeMapData;
   /**
    * Skip every write-side wiki call (createWikiChild, push, lockUpsert).
    * Read-side calls (resolveWikiNode, listWikiChildren) still run so the
@@ -256,14 +278,34 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     }
   }
 
-  // Tag-level recovery pool: prefer exact title match, then fall back to
-  // Untitled/Authentication zombies (created by earlier failed sync attempts).
-  const tagPool = poolByTitle(tagChildren);
+  // Tag-level recovery pool: indexed by nodeToken / endpoint-identity / title.
+  // Matching cascade per tag: node-map[tagId] → byTitle. Identity-by-title
+  // doesn't apply to tag nodes (their title is plain language, not METHOD path).
+  const tagPool = buildChildPool(tagChildren);
+
+  // Collect zombies for end-of-sync report. Zombies = wiki nodes that were
+  // listed under the parent at the start of sync but never claimed by any
+  // tag/group/leaf during this run. They're documents for endpoints / tags /
+  // groups that no longer exist in the spec (or whose identity drifted in a
+  // way our cascade couldn't recover).
+  const zombieReport: Array<{
+    kind: 'tag' | 'group' | 'leaf';
+    title: string;
+    nodeToken: string;
+    objToken: string;
+    spaceId: string;
+    parentTitle: string;
+    endpointIdentity: string | null;
+  }> = [];
 
   // Sequential per-tag (parallel per-endpoint inside)
   for (const tagId of tagIds) {
     const tagTitle = titleForTag(tagId, api, svc.tagAliases);
-    let tagNode = popFromPool(tagPool, tagTitle);
+    const knownTagNode = getTagNode(ctx.nodeMap, svc.name, tagId);
+    let tagNode = popByCascade(tagPool, {
+      nodeToken: knownTagNode,
+      title: tagTitle,
+    });
     if (!tagNode) {
       if (ctx.dryRun) {
         tagNode = fakeDryRunChild(tagTitle, parent.nodeToken);
@@ -288,6 +330,10 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       process.stdout.write(
         `[sync] ${svc.name}: ${ctx.dryRun ? '(would) recycle' : 'recycled'} tag node ${tagNode.nodeToken} (was "${tagNode.title}") -> "${tagTitle}"\n`,
       );
+    }
+    // Persist tagId → nodeToken so the next sync can recycle even if title drifts.
+    if (!ctx.dryRun && !tagNode.nodeToken.startsWith('dryrun-')) {
+      setTagNode(ctx.nodeMap, svc.name, tagId, tagNode.nodeToken);
     }
 
     // Render tag-level index. In endpoint mode this is intentionally SHORT —
@@ -325,7 +371,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         continue;
       }
     }
-    const leafPool = poolByTitle(leafChildren);
+    const leafPool = buildChildPool(leafChildren);
 
     // Endpoints under this tag
     const slices = endpoints.filter((e) => e.tagId === tagId);
@@ -368,8 +414,14 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     // 2) Multi-endpoint groups: create intermediate group node, then leaves
     for (const groupKey of groupKeys) {
       const groupTitle = grouping.groupTitles[groupKey] ?? groupKey;
-      // Find or create the group intermediate node under the tag
-      let groupNode = popFromPool(leafPool, groupTitle);
+      // Find or create the group intermediate node under the tag.
+      // Identity-by-title doesn't apply (group titles are path-prefix
+      // derived plain language), so cascade is: node-map → byTitle.
+      const knownGroupNode = getGroupNode(ctx.nodeMap, svc.name, tagId, groupKey);
+      let groupNode = popByCascade(leafPool, {
+        nodeToken: knownGroupNode,
+        title: groupTitle,
+      });
       if (!groupNode) {
         if (ctx.dryRun) {
           groupNode = fakeDryRunChild(groupTitle, tagNode!.nodeToken);
@@ -397,6 +449,14 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
             continue;
           }
         }
+      } else {
+        process.stdout.write(
+          `[sync] ${svc.name}: ${ctx.dryRun ? '(would) recycle' : 'recycled'} group node ${groupNode.nodeToken} (was "${groupNode.title}") -> "${groupTitle}"\n`,
+        );
+      }
+      // Persist (tagId, groupKey) → nodeToken for next sync's recycling.
+      if (!ctx.dryRun && !groupNode.nodeToken.startsWith('dryrun-')) {
+        setGroupNode(ctx.nodeMap, svc.name, tagId, groupKey, groupNode.nodeToken);
       }
       // List existing endpoint leaves under THIS group node.
       // If we faked the group node in dry-run, there are no real children to list.
@@ -416,7 +476,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
           continue;
         }
       }
-      const groupLeafPool = poolByTitle(groupLeafChildren);
+      const groupLeafPool = buildChildPool(groupLeafChildren);
       // Push the group intermediate doc itself (just a TOC)
       const groupSlices = grouping.groups[groupKey];
       const indexMd = buildTagIndexMarkdown(groupTitle, groupSlices);
@@ -437,6 +497,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
             ctx,
             svcName: svc.name,
             tagId,
+            groupKey,
             parentSpaceId: parent.spaceId,
             parentNodeToken: groupNode!.nodeToken,
             pool: groupLeafPool,
@@ -448,10 +509,75 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         );
         leafResults.push(r);
       }
+      // Anything left in groupLeafPool was not claimed by any current endpoint
+      // under this group — record as zombie.
+      for (const c of remainingChildren(groupLeafPool)) {
+        zombieReport.push({
+          kind: extractEndpointIdentity(c.title) ? 'leaf' : 'group',
+          title: c.title,
+          nodeToken: c.nodeToken,
+          objToken: c.objToken,
+          spaceId: parent.spaceId,
+          parentTitle: groupTitle,
+          endpointIdentity: extractEndpointIdentity(c.title),
+        });
+      }
+    }
+    // Anything left under this tag (singleton-level leafPool) is a zombie too.
+    for (const c of remainingChildren(leafPool)) {
+      zombieReport.push({
+        kind: extractEndpointIdentity(c.title) ? 'leaf' : 'group',
+        title: c.title,
+        nodeToken: c.nodeToken,
+        objToken: c.objToken,
+        spaceId: parent.spaceId,
+        parentTitle: tagTitle,
+        endpointIdentity: extractEndpointIdentity(c.title),
+      });
     }
 
     results.push(...leafResults);
   }
+
+  // Any tags left unclaimed in the top-level pool are zombies too — typically
+  // tags that were removed from the spec entirely. Includes the case where
+  // includeTags/excludeTags narrowed scope this run; users running a scoped
+  // sync should treat these as expected, not zombies. We still report them
+  // so the user can confirm.
+  for (const c of remainingChildren(tagPool)) {
+    zombieReport.push({
+      kind: 'tag',
+      title: c.title,
+      nodeToken: c.nodeToken,
+      objToken: c.objToken,
+      spaceId: parent.spaceId,
+      parentTitle: parent.title,
+      endpointIdentity: extractEndpointIdentity(c.title),
+    });
+  }
+
+  if (zombieReport.length > 0) {
+    process.stderr.write(
+      `\n[sync] ${svc.name}: ⚠ ${zombieReport.length} zombie wiki node(s) detected ` +
+        `(leftover from prior syncs, no longer in current spec):\n`,
+    );
+    for (const z of zombieReport) {
+      const idLabel = z.endpointIdentity ? ` [${z.endpointIdentity}]` : '';
+      const url = z.nodeToken.startsWith('dryrun-')
+        ? '(dry-run, no URL)'
+        : `https://feishu.cn/wiki/${z.nodeToken}`;
+      process.stderr.write(
+        `  · ${z.kind}: "${z.title}"${idLabel} (under "${z.parentTitle}")\n` +
+          `      nodeToken=${z.nodeToken} objToken=${z.objToken}\n` +
+          `      ${url}\n`,
+      );
+    }
+    process.stderr.write(
+      `  ⓘ openapi-lark does not delete wiki nodes — review the list and remove ` +
+        `manually if they're truly obsolete. (Auto-prune is a separate feature.)\n\n`,
+    );
+  }
+
   return results;
 }
 
@@ -460,9 +586,13 @@ async function pushEndpointLeaf(args: {
   ctx: EndpointSyncContext;
   svcName: string;
   tagId: string;
+  /** If the leaf lives under an auto-created group node, this is the
+   *  group key (path-prefix derived). Used only for diagnostic logging;
+   *  leaf identity in node-map is METHOD+path regardless of group. */
+  groupKey?: string;
   parentSpaceId: string;
   parentNodeToken: string;
-  pool: Map<string, WikiChild[]>;
+  pool: ChildPool;
   slice: EndpointSlice;
   larkBin: string;
   outDirRelTag: string;
@@ -470,7 +600,17 @@ async function pushEndpointLeaf(args: {
 }): Promise<ServiceResult> {
   const { ctx, svcName, tagId, parentSpaceId, parentNodeToken, pool, slice, larkBin, outDirRelTag, labelPrefixExtra } = args;
   const leafTitle = titleForEndpoint(slice);
-  let leaf = popFromPool(pool, leafTitle);
+  const identity = endpointIdentity(slice.method, slice.path);
+  // Cascade: node-map → identity-extracted-from-title → legacy full-title.
+  // This survives a summary change ("预测" → "创建预测（下注）") because the
+  // identity (POST /api/v1/predicts) stays the same; the old wiki node is
+  // recycled and renamed via --new-title on push.
+  const knownLeafNode = getLeafNode(ctx.nodeMap, svcName, identity);
+  let leaf = popByCascade(pool, {
+    nodeToken: knownLeafNode,
+    endpointIdentity: identity,
+    title: leafTitle,
+  });
   if (!leaf) {
     if (ctx.dryRun) {
       leaf = fakeDryRunChild(leafTitle, parentNodeToken);
@@ -486,6 +626,17 @@ async function pushEndpointLeaf(args: {
         };
       }
     }
+  } else if (leaf.title !== leafTitle) {
+    // We recycled an existing node whose title drifted (summary change).
+    // renderAndPush will pass `newTitle: leafTitle` to lark-cli below.
+    process.stdout.write(
+      `[sync] ${svcName}: ${ctx.dryRun ? '(would) rename' : 'renaming'} leaf node ${leaf.nodeToken} ` +
+        `(was "${leaf.title}") -> "${leafTitle}" [identity=${identity}]\n`,
+    );
+  }
+  // Persist METHOD+path → nodeToken for future syncs. Skip dry-run/faked nodes.
+  if (!ctx.dryRun && !leaf.nodeToken.startsWith('dryrun-')) {
+    setLeafNode(ctx.nodeMap, svcName, identity, leaf.nodeToken);
   }
   return renderAndPush({
     ctx,
@@ -498,37 +649,10 @@ async function pushEndpointLeaf(args: {
   });
 }
 
-function poolByTitle(children: WikiChild[]): Map<string, WikiChild[]> {
-  const m = new Map<string, WikiChild[]>();
-  for (const c of children) {
-    const k = c.title.trim().toLowerCase();
-    if (!m.has(k)) m.set(k, []);
-    m.get(k)!.push(c);
-  }
-  return m;
-}
-
-function popFromPool(pool: Map<string, WikiChild[]>, title: string): WikiChild | undefined {
-  const k = title.trim().toLowerCase();
-  const arr = pool.get(k);
-  if (arr && arr.length > 0) return arr.shift();
-  // Inverse-order match: "X — Y" and "Y — X" carry the same operation but
-  // different title order. v1.4 reversed the default order (summary first),
-  // so existing wiki nodes from v1.3 are titled "METHOD path — summary" and
-  // would no longer match new "summary — METHOD path" titles. Try the swap.
-  const parts = title.split(' — ');
-  if (parts.length === 2) {
-    const swapped = `${parts[1].trim()} — ${parts[0].trim()}`.toLowerCase();
-    const swapArr = pool.get(swapped);
-    if (swapArr && swapArr.length > 0) return swapArr.shift();
-  }
-  // Zombie recovery (titles clobbered by prior failed sync)
-  for (const zk of ['untitled', 'authentication']) {
-    const z = pool.get(zk);
-    if (z && z.length > 0) return z.shift();
-  }
-  return undefined;
-}
+// Pool helpers moved to src/lark/child-pool.ts (buildChildPool, popByCascade,
+// popByTitle, popByEndpointIdentity, popByNodeToken, remainingChildren).
+// They live there so identity-based matching gets full unit-test coverage
+// independent of the sync orchestration.
 
 interface RAPArgs {
   ctx: EndpointSyncContext;
@@ -622,6 +746,11 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
+    // Always lock the wiki node + docx title to the spec-derived value.
+    // Without --new-title, lark-cli's `--command overwrite` picks an H1 from
+    // the markdown body as the title; recycled nodes whose old title drifted
+    // would keep the stale title in the wiki sidebar.
+    newTitle: titleForLock,
   });
   if (pushed.ok) {
     // Record successful push in lockfile
@@ -722,6 +851,11 @@ async function pushPrebuilt(args: PushPrebuiltArgs): Promise<ServiceResult> {
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
+    // Always lock the wiki node + docx title to the spec-derived value.
+    // Without --new-title, lark-cli's `--command overwrite` picks an H1 from
+    // the markdown body as the title; recycled nodes whose old title drifted
+    // would keep the stale title in the wiki sidebar.
+    newTitle: titleForLock,
   });
   if (pushed.ok) {
     lockUpsert(ctx.lock, ctx.service.name, docToken, {
