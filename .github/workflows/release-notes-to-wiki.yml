@@ -1,0 +1,103 @@
+# Sync GitHub Release notes → 飞书 wiki 子文档
+#
+# Trigger: 每次 GitHub Release 发布 / 更新
+# Output : 在 RELEASE_NOTES_PARENT_NODE 下创建 / 更新一个 wiki 子节点
+#          标题 = "vX.Y.Z — <release.name 副标题>"
+#          内容 = release.body（markdown 原文）
+#
+# Idempotency: 用 wiki +node-list 查找同标题节点；存在就 docs +update 覆盖，不
+# 存在就 wiki +node-create 再 +update。避免重复发布同一 tag 时建出多个节点。
+
+name: Sync release notes to Lark wiki
+
+on:
+  release:
+    types: [published, edited]
+
+env:
+  # Hardcoded wiki target — change here if you move the openapi-lark hub.
+  # parent_node_token of the "openapi-lark" intermediate wiki node.
+  WIKI_PARENT_NODE: BzexwOLNQihTVJkn70wjUUMYpGb
+  WIKI_SPACE_ID:    '7642234757744496151'
+
+jobs:
+  publish-release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install lark-cli
+        run: npx @larksuite/cli@latest install
+
+      - name: Resolve / create wiki child for ${{ github.event.release.tag_name }}
+        id: wiki
+        env:
+          LARKSUITE_CLI_APP_ID:     ${{ secrets.LARK_APP_ID }}
+          LARKSUITE_CLI_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARKSUITE_CLI_BRAND:      feishu   # or 'lark' for Lark Suite
+          LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1'
+          TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+        run: |
+          set -euo pipefail
+
+          # Composed title: prefer release.name when set, otherwise just tag
+          if [ -n "${RELEASE_NAME:-}" ] && [ "${RELEASE_NAME}" != "${TAG}" ]; then
+            TITLE="${RELEASE_NAME}"
+          else
+            TITLE="${TAG}"
+          fi
+          echo "title=${TITLE}"
+
+          # Look for existing child with same title (idempotent)
+          EXISTING=$(lark-cli wiki nodes list \
+            --params "{\"space_id\":\"${WIKI_SPACE_ID}\",\"parent_node_token\":\"${WIKI_PARENT_NODE}\"}" \
+            --as user 2>/dev/null \
+            | jq -r --arg t "$TITLE" '.data.items[] | select(.title==$t) | .obj_token' | head -1)
+
+          if [ -n "${EXISTING:-}" ]; then
+            echo "Found existing child: $EXISTING — will overwrite"
+            DOC_TOKEN="$EXISTING"
+          else
+            echo "No existing child — creating"
+            DOC_TOKEN=$(lark-cli wiki +node-create \
+              --space-id "$WIKI_SPACE_ID" \
+              --parent-node-token "$WIKI_PARENT_NODE" \
+              --title "$TITLE" \
+              --obj-type docx \
+              --node-type origin \
+              --as user 2>&1 \
+              | jq -r '.data.obj_token')
+          fi
+
+          if [ -z "${DOC_TOKEN:-}" ] || [ "$DOC_TOKEN" = "null" ]; then
+            echo "::error::failed to resolve doc_token for $TITLE"
+            exit 1
+          fi
+          echo "DOC_TOKEN=$DOC_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Push release body to wiki doc
+        env:
+          LARKSUITE_CLI_APP_ID:     ${{ secrets.LARK_APP_ID }}
+          LARKSUITE_CLI_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARKSUITE_CLI_BRAND:      feishu
+          LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1'
+          TAG:  ${{ github.event.release.tag_name }}
+          BODY: ${{ github.event.release.body }}
+          URL:  ${{ github.event.release.html_url }}
+          DOC_TOKEN: ${{ steps.wiki.outputs.DOC_TOKEN }}
+        run: |
+          set -euo pipefail
+          # First-H1 sets the docx title (lark-cli overwrite behavior).
+          # We re-state title + add a back-link to GitHub release for traceability.
+          cat > /tmp/release-body.md <<EOF
+          # ${TAG}
+
+          > Source: [GitHub Release ${TAG}](${URL})
+
+          ${BODY}
+          EOF
+          lark-cli docs +update --api-version v2 \
+            --doc "$DOC_TOKEN" \
+            --command overwrite \
+            --doc-format markdown \
+            --content "$(cat /tmp/release-body.md)" \
+            --as user
