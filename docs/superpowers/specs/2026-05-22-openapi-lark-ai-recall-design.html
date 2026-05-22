@@ -105,7 +105,7 @@ section.toc li { margin-bottom: 2px; }
 <tbody>
 <tr><td>A. 本地单项目 stdio MCP</td><td>读 <code>.openapi-lark/manifest.json</code> + 本地 md</td><td class="good"><span class="tag must">采用</span> ROI 最高，1-2 天能落地</td></tr>
 <tr><td>B. 跨项目中心索引</td><td>共享后端 + 多项目 manifest 汇总</td><td><span class="tag later">v0.4+</span> 要部署后端，门槛高，但 A 是它的必经路径</td></tr>
-<tr><td>C. 飞书 wiki 搜索桥</td><td>纯翻译层调 <code>wiki +node-search</code></td><td class="bad"><span class="tag skip">否决</span> 飞书搜索精度太差，无结构化输出</td></tr>
+<tr><td>C. 飞书 wiki 搜索桥</td><td>纯翻译层调 <code>drive +search</code>（Search v2）</td><td class="bad"><span class="tag skip">否决</span> 飞书搜索精度太差，无结构化输出</td></tr>
 </tbody>
 </table>
 <aside class="note">用户场景判定：开发者在 IDE 里写代码时让 AI 自助查自己项目的接口。这正是 A 的射程范围。"团队群里 @bot 问接口" 是 B/C 场景，不在 v0.3 范围内。</aside>
@@ -296,7 +296,7 @@ section.toc li { margin-bottom: 2px; }
 │   │   ├── search.ts       # 关键词 + 加权评分
 │   │   └── types.ts        # 本地 TS 类型，跟 openapi-lark 的 schemas 一致
 │   ├── live/
-│   │   ├── lark-cli.ts     # 子进程封装：node-search / docs+fetch
+│   │   ├── lark-cli.ts     # 子进程封装：drive +search / docs +fetch
 │   │   └── fallback.ts     # live 失败时降级到本地的逻辑
 │   ├── mcp/
 │   │   ├── server.ts       # @modelcontextprotocol/sdk Server 实例
