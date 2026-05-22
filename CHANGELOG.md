@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — init 注入 CLAUDE.md + 稳定身份匹配根治 zombie wiki 节点
+## 0.3.0 — 2026-05-22
 
 ### `init` 现在会自动注入 CLAUDE.md 段（AI 可读引导）
 
@@ -17,12 +17,16 @@
 
 这是 v0.3 AI-recall 设计被砍后的轻量替代。完整决策记录见 `docs/superpowers/specs/2026-05-22-openapi-lark-ai-recall-design.html`。砍掉理由：实测 `lark-cli drive +search` 精度并不差（5 个 query 验证），且小项目 AI 直接 Read spec 完全够用，原 manifest + recall 子命令组在当前规模下是过度设计。
 
-## Unreleased — 稳定身份匹配，根治 zombie wiki 节点
+### `init` 重跑不再吞 yaml 注释
+
+之前 init 用 `parse + stringify` 会丢所有注释。改用 yaml lib 的 Document API（`parseDocument` + 在 AST 上 set），init 真正成为幂等操作。Dogfooding forecast-market-api 时发现的隐藏 bug。
+
+### 稳定身份匹配，根治 zombie wiki 节点
 
 修复 sync 改 OpenAPI `summary` / `tagAlias` 会产生 zombie wiki 节点的 bug。
 现在 sync 用 spec 派生的稳定身份键作为 join key，title 只是显示。
 
-### 修复 / 行为变化
+#### 修复 / 行为变化
 
 - **叶子节点身份键 = `METHOD + path`**：以前用整个 title 做匹配，summary 一改就 miss 然后 createWikiChild 新建 + 留旧节点。现在 cascade 匹配：`node-map.json` 已知 nodeToken → 从已有 title 抽 `METHOD path` → 旧 title 完全匹配 → 创建新节点。匹配上以后如果 title 不同，下推时传 `--new-title` 把 wiki 侧边栏标题改过来。
 - **Tag / Group 中间节点持久化身份**：新增 `.openapi-lark/node-map.json`（gitignored，与 sync-lock 同目录）维护 `tagId → nodeToken` / `tagId/groupKey → nodeToken` 映射。`tagAliases` 改名时不再造 zombie tag。
@@ -30,20 +34,24 @@
 - **末尾 zombie 报告**：sync 结束后 stderr 列出 pool 里未被认领的旧节点（标题 / nodeToken / wiki URL），方便人工 review 是否真的过时。不自动删，要清理就去 wiki 手动 archive。
 - **`.openapi-lark/node-map.json` 不进 git**：跟 sync-lock / auto-tokens 一样 per-project local。第一次 sync 时通过 title 抽 `METHOD path` 回填，能覆盖大多数升级场景。
 
-### 新文件
+#### 新文件
 
 - `src/node-map.ts` + `test/node-map.test.ts`（14 tests）
 - `src/lark/child-pool.ts` + `test/child-pool.test.ts`（12 tests）
 
-### 影响面
+#### 影响面
 
 - 用户首次 sync 时 leaf 通过 title 抽身份回填 node-map；若 title 完全不可解析（曾被手动改过），fallback 到原有 title 匹配，最坏不会比当前更差。
 - `--new-title` 需要 lark-cli >= 1.0.32（init 已强制 >=1.0.34）。
-- **本次只修了 `mode: endpoint`**。`mode: tree` / 单文件模式的同名问题（tagAlias 改名造 tag zombie）作为后续 issue 处理。endpoint 模式是当前主力场景，tree 模式的中间节点数远少于 endpoint 的叶子节点数，影响面小。
+- **本次只修了 `mode: endpoint`**。`mode: tree` / 单文件模式的同名问题（tagAlias 改名造 tag zombie）作为后续 issue 处理。
 
-### Test
+### 实测验证（forecast-market-api dogfood）
 
-`pnpm test` 241 全过；`tsc --noEmit` 干净；`npm run build` 干净。
+跑新版 sync 在 forecast-market-api 上：52 个 endpoint 全 skipped（sha256 match），末尾 stderr 列出 **11 个 zombie wiki 节点**（6 leaf + 5 tag/intermediate），每条带 nodeToken + objToken + URL，用户能直接判断是否清理。
+
+### 测试
+
+251 tests 全过；tsc 干净；build 干净。
 
 ## 0.1.0 — 2026-05-20
 
