@@ -178,11 +178,13 @@ section.toc li { margin-bottom: 2px; }
             "objToken": "DrW7d...",
             "url": "https://portwind.jp.larksuite.com/wiki/MnaidT2w..."
           },
-          "localMdPath": "forecast-market-api/games/predicts/创建预测_POST_api_v1_predicts.md",
+          "localMdPath": ".openapi-lark/forecast-market-api/games/predicts/创建预测_POST_api_v1_predicts.md",
           "requestBodyShape": ["amount", "predictId", "side"],
           "responseShape": { "200": ["isFirstPredict", "predictId", "balance"], "400": ["error", "code"] },
           "requestBodySchema": { /* full dereferenced JSON Schema */ },
-          "responseSchemas": { "200": { /* ... */ }, "400": { /* ... */ } }
+          "responseSchemas": { "200": { /* ... */ }, "400": { /* ... */ } },
+          "syncStatus": "ok",
+          "lastSuccessfulSyncAt": "2026-05-22T01:30:00Z"
         }
       ]
     }
@@ -206,6 +208,8 @@ section.toc li { margin-bottom: 2px; }
 <tr><td><code>endpoints[].localMdPath</code></td><td>相对 basedir 的相对路径，跟 sync-endpoint.ts 里 <code>outRel</code> 用同一逻辑</td></tr>
 <tr><td><code>endpoints[].requestBodyShape</code></td><td>requestBody schema 顶层 <code>properties</code> 的 key 数组；不递归。无 requestBody 时空数组</td></tr>
 <tr><td><code>endpoints[].responseShape.&lt;status&gt;</code></td><td>同上，按状态码（200/201/400/...）分别给出 shape</td></tr>
+<tr><td><code>endpoints[].syncStatus</code></td><td><code>"ok"</code> / <code>"failed"</code> — 该 endpoint 本次 sync 是否成功推到飞书 wiki。即使 failed，本地 md 通常已渲染（除非 render 也失败），AI 可读到陈旧但有效的内容</td></tr>
+<tr><td><code>endpoints[].lastSuccessfulSyncAt</code></td><td>该 endpoint 最近一次 <code>syncStatus: "ok"</code> 的时间戳。failed 时仍保留上次的值，便于判断陈旧度</td></tr>
 </tbody>
 </table>
 
