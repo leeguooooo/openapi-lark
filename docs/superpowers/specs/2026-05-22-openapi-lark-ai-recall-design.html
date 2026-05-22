@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>openapi-lark v0.3 — AI 可读 / Recall MCP 设计稿</title>
+<style>
+:root {
+  --fg: #1d1d1f;
+  --fg-muted: #5e5e63;
+  --bg: #fbfbfd;
+  --surface: #ffffff;
+  --border: #d2d2d7;
+  --border-soft: #e6e6eb;
+  --accent: #0066cc;
+  --accent-soft: #e8f1fc;
+  --warn-bg: #fff5e6;
+  --warn-border: #f0a060;
+  --code-bg: #f5f5f7;
+  --good: #1f7a3e;
+  --bad: #c0382b;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  padding: 32px max(24px, calc(50vw - 460px));
+  font: 15px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
+h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 17px; margin: 32px 0 12px; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+h3 { font-size: 14px; margin: 20px 0 8px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.meta { color: var(--fg-muted); font-size: 13px; }
+.meta b { color: var(--fg); font-weight: 600; }
+p, ul, ol { margin: 8px 0 14px; }
+ul, ol { padding-left: 22px; }
+li { margin: 4px 0; }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; }
+pre code { background: transparent; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; background: var(--surface); }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; font-size: 13.5px; }
+th { background: var(--code-bg); font-weight: 600; }
+aside.note { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 10px 14px; margin: 14px 0; font-size: 13.5px; border-radius: 0 6px 6px 0; }
+aside.warn { background: var(--warn-bg); border-left: 3px solid var(--warn-border); padding: 10px 14px; margin: 14px 0; font-size: 13.5px; border-radius: 0 6px 6px 0; }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11.5px; font-weight: 600; margin: 0 4px 0 0; vertical-align: 2px; }
+.tag.must { background: #2a8147; color: #fff; }
+.tag.skip { background: #b0b0b8; color: #fff; }
+.tag.later { background: #d49021; color: #fff; }
+hr { border: none; border-top: 1px solid var(--border-soft); margin: 28px 0; }
+section.toc ol { columns: 2; column-gap: 24px; }
+section.toc li { margin-bottom: 2px; }
+.good { color: var(--good); font-weight: 600; }
+.bad { color: var(--bad); font-weight: 600; }
+@media (max-width: 720px) {
+  body { padding: 20px; }
+  section.toc ol { columns: 1; }
+}
+</style>
+</head>
+<body>
+
+<header>
+<h1>openapi-lark v0.3 — AI 可读 / Recall MCP 设计稿</h1>
+<p class="meta"><b>日期</b> 2026-05-22 &nbsp;·&nbsp; <b>状态</b> Approved (user signed off in brainstorm) &nbsp;·&nbsp; <b>作者</b> leo + Claude &nbsp;·&nbsp; <b>对应版本</b> openapi-lark v0.3 + openapi-lark-recall v0.1</p>
+</header>
+
+<section class="toc">
+<h3>目录</h3>
+<ol>
+<li><a href="#context">问题与目标</a></li>
+<li><a href="#scope-decision">范围裁定</a></li>
+<li><a href="#packaging">分两个 skill 的理由</a></li>
+<li><a href="#repo-layout">仓库 / 发布形态</a></li>
+<li><a href="#manifest">manifest.json schema</a></li>
+<li><a href="#mcp-tools">MCP tool 接口</a></li>
+<li><a href="#lark-cli">lark-cli 使用边界</a></li>
+<li><a href="#sync-changes">sync skill 端的改动</a></li>
+<li><a href="#recall-impl">recall skill 实现拆分</a></li>
+<li><a href="#search-ranking">关键词搜索 + 排序</a></li>
+<li><a href="#config-examples">用户配置范例</a></li>
+<li><a href="#errors">错误处理 / 版本契约</a></li>
+<li><a href="#testing">测试策略</a></li>
+<li><a href="#out-of-scope">明确不做（v0.3）</a></li>
+<li><a href="#risks">风险与未解</a></li>
+</ol>
+</section>
+
+<h2 id="context">1. 问题与目标</h2>
+<p>openapi-lark v0.2.x 解决的是「项目 OpenAPI spec → 飞书 wiki 人可读文档」。<strong>但 AI 读不到这些文档</strong>：</p>
+<ul>
+<li>飞书 wiki 的 markdown 渲染版（参数表 / 响应表 / JSON 示例）是为人类视觉设计的，AI 解析时丢字段</li>
+<li>没有 endpoint 索引 — AI 不知道「forecast-market-api 里有没有 predicts 接口」该去哪查</li>
+<li>没有结构化 schema 出口 — AI 写 client 代码时要从 markdown table 反推 TypeScript interface，错误率高</li>
+<li>飞书 wiki 自带搜索精度差，不适合按 path / method / schema 字段名精准查</li>
+</ul>
+<p><strong>目标</strong>：每次 <code>sync</code> 之后产出一份机器可读的 <code>manifest.json</code>，包含 dereferenced schema、endpoint 元数据、本地 md 文件路径、飞书 wiki URL。再用一个 stdio MCP server 把它喂给 Claude Code / Cursor / 任意 MCP 客户端。</p>
+
+<h2 id="scope-decision">2. 范围裁定</h2>
+<p>brainstorm 过程中考虑了三种架构：</p>
+<table>
+<thead><tr><th>方案</th><th>形态</th><th>v0.3 取舍</th></tr></thead>
+<tbody>
+<tr><td>A. 本地单项目 stdio MCP</td><td>读 <code>.openapi-lark/manifest.json</code> + 本地 md</td><td class="good"><span class="tag must">采用</span> ROI 最高，1-2 天能落地</td></tr>
+<tr><td>B. 跨项目中心索引</td><td>共享后端 + 多项目 manifest 汇总</td><td><span class="tag later">v0.4+</span> 要部署后端，门槛高，但 A 是它的必经路径</td></tr>
+<tr><td>C. 飞书 wiki 搜索桥</td><td>纯翻译层调 <code>wiki +node-search</code></td><td class="bad"><span class="tag skip">否决</span> 飞书搜索精度太差，无结构化输出</td></tr>
+</tbody>
+</table>
+<aside class="note">用户场景判定：开发者在 IDE 里写代码时让 AI 自助查自己项目的接口。这正是 A 的射程范围。"团队群里 @bot 问接口" 是 B/C 场景，不在 v0.3 范围内。</aside>
+
+<h2 id="packaging">3. 分两个 skill 的理由</h2>
+<p>sync 和 recall 生命周期、触发词、消费者完全不同，强行揉一个 SKILL.md 会让 AI 派发不准。</p>
+<table>
+<thead><tr><th>维度</th><th><code>openapi-lark</code>（已存在，保持）</th><th><code>openapi-lark-recall</code>（新）</th></tr></thead>
+<tbody>
+<tr><td>角色</td><td>OpenAPI → 飞书 wiki 文档树</td><td>本地 manifest + 飞书 wiki → AI MCP</td></tr>
+<tr><td>触发场景</td><td>CI / git hook / 一次性 build</td><td>IDE 长驻 stdio MCP server</td></tr>
+<tr><td>命令</td><td><code>sync</code> / <code>lint</code> / <code>render</code> / <code>doctor</code> / <code>init</code> / <code>install-hook</code></td><td><code>mcp</code> / <code>manifest</code>（regen）</td></tr>
+<tr><td>跟 lark-cli 关系</td><td>同步推内容，深度依赖</td><td>仅 <code>--live</code> 选项走 lark-cli</td></tr>
+<tr><td>SKILL.md 触发词</td><td>"同步接口文档到飞书 / openapi 推到飞书"</td><td>"AI 查我们接口 / 接口 MCP / openapi recall"</td></tr>
+<tr><td>单装可能</td><td>否（核心）</td><td>是 — 团队消费方只装 recall 也能用别人 sync 好的 manifest</td></tr>
+<tr><td>跨 skill 契约</td><td colspan="2" style="text-align: center;"><code>manifest.json schema v1</code>（见 §5）</td></tr>
+</tbody>
+</table>
+
+<h2 id="repo-layout">4. 仓库 / 发布形态</h2>
+<p><strong>决定：两个独立 repo，<span class="bad">不</span>做 monorepo</strong>。理由：</p>
+<ul>
+<li>openapi-lark 已发布、有自己的 release pipeline + CHANGELOG + git 历史；为加 sibling 而把它降级到子目录代价大</li>
+<li>monorepo 重构有可能破坏现有的 <code>npx -y -p "github:leeguooooo/openapi-lark#main"</code> 安装路径，v0.3 不值这风险</li>
+<li>共享只是一份小 JSON Schema，<strong>不值得</strong>引入 workspace 管理</li>
+<li>未来真要合 monorepo，"合两个 repo" 比 "拆一个 repo" 容易</li>
+</ul>
+
+<table>
+<thead><tr><th>仓库</th><th>npm 包</th><th>skill 装法</th><th>引用方式</th></tr></thead>
+<tbody>
+<tr><td>leeguooooo/openapi-lark（既有）</td><td><code>openapi-lark</code>（或 GitHub 源）</td><td><code>npx skills add github:leeguooooo/openapi-lark</code></td><td>—</td></tr>
+<tr><td>leeguooooo/openapi-lark-recall（新建）</td><td><code>openapi-lark-recall</code></td><td><code>npx skills add github:leeguooooo/openapi-lark-recall</code></td><td>—</td></tr>
+</tbody>
+</table>
+
+<p><strong>manifest schema 的 single source of truth</strong>：放在 openapi-lark repo 的 <code>schemas/manifest.v1.schema.json</code>（JSON Schema 标准）。recall repo 在自己代码里 <strong>copy 一份验证用的 JSON Schema</strong>（不依赖第三方包），版本号字段强校验。两边 TS 类型可以各自手写，因为 manifest 字段少且不易变。</p>
+
+<h2 id="manifest">5. manifest.json schema</h2>
+<p>每次 <code>sync</code>（endpoint 模式）末尾自动写到 <code>.openapi-lark/manifest.json</code>，与 <code>sync-lock.json</code> 同期产出。</p>
+
+<pre><code>{
+  "version": 1,
+  "generatedAt": "2026-05-22T01:30:00Z",
+  "tool": { "name": "openapi-lark", "version": "0.3.0" },
+  "services": {
+    "forecast-market-api": {
+      "specPath": "api/openapi.yaml",      // 相对 basedir
+      "specSha256": "abc123...",            // 用于失效检测
+      "wikiParent": {
+        "docToken": "PARENT_TOKEN",
+        "spaceId": "7641...",
+        "nodeToken": "NODE_PARENT",
+        "title": "API Docs Parent",
+        "url": "https://portwind.jp.larksuite.com/wiki/NODE_PARENT"
+      },
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/predicts",
+          "operationId": "createPredict",
+          "tagId": "games",
+          "groupKey": "predicts",
+          "summary": "创建预测（下注）",
+          "descriptionFirstLine": "用户对某场比赛下注，扣除余额并记录预测",
+          "deprecated": false,
+          "internal": false,
+          "wiki": {
+            "nodeToken": "MnaidT2w...",
+            "objToken": "DrW7d...",
+            "url": "https://portwind.jp.larksuite.com/wiki/MnaidT2w..."
+          },
+          "localMdPath": "forecast-market-api/games/predicts/创建预测_POST_api_v1_predicts.md",
+          "requestBodyShape": ["amount", "predictId", "side"],
+          "responseShape": { "200": ["isFirstPredict", "predictId", "balance"], "400": ["error", "code"] },
+          "requestBodySchema": { /* full dereferenced JSON Schema */ },
+          "responseSchemas": { "200": { /* ... */ }, "400": { /* ... */ } }
+        }
+      ]
+    }
+  }
+}</code></pre>
+
+<aside class="note"><strong><code>requestBodyShape</code> / <code>responseShape</code> 是关键创新</strong>：把 schema 顶层字段名平铺到搜索语料里。这样 AI 问 "isFirstPredict 是哪个接口返回的" 时能直接命中，正是触发本次设计的 bug 场景。</aside>
+
+<aside class="warn"><strong>大小预估</strong>：单 endpoint 含完整 dereferenced schema 可能 5–30KB。200 endpoints 的 manifest.json 估计 1–5MB。<strong>不分文件</strong>，MCP server 一次性载入；如果未来突破 10MB 再考虑分片。</aside>
+
+<h2 id="mcp-tools">6. MCP tool 接口</h2>
+<p>命名规范：snake_case（MCP 生态主流）。零冲突于 lark-openapi-mcp 的 <code>im.v1.*</code> 命名空间。</p>
+
+<table>
+<thead><tr><th>Tool</th><th>Input</th><th>Output</th><th>Live 模式 (<code>--live</code>)</th></tr></thead>
+<tbody>
+<tr>
+<td><code>list_services</code></td>
+<td>—</td>
+<td><code>[{ name, endpointCount, specPath, specSha256 }]</code></td>
+<td>同 default（manifest 是权威）</td>
+</tr>
+<tr>
+<td><code>list_endpoints</code></td>
+<td><code>{ service?, tag?, deprecated? }</code></td>
+<td><code>[{ method, path, summary, tagId, wikiUrl, deprecated }]</code></td>
+<td>同 default</td>
+</tr>
+<tr>
+<td><code>search_endpoints</code></td>
+<td><code>{ query, service?, method?, tag?, limit=10 }</code></td>
+<td>按相关性排序的命中数组（见 §10）</td>
+<td>同 default + <code>lark-cli wiki +node-search --query &lt;q&gt;</code> 命中并集</td>
+</tr>
+<tr>
+<td><code>get_endpoint</code></td>
+<td><code>{ service, method, path }</code></td>
+<td><code>{ ...metadata, requestBodySchema, responseSchemas, markdownContent }</code></td>
+<td>同 default，但 <code>markdownContent</code> 走 <code>lark-cli docs +fetch --doc &lt;objToken&gt;</code> 拉飞书最新</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>get_endpoint 返回结构化 JSON Schema + 渲染 markdown 双轨</strong>。AI 写 TypeScript 客户端时拿 schema，给人复述时拿 markdown。把"AI 可读"做到底。</p>
+
+<h2 id="lark-cli">7. lark-cli 使用边界</h2>
+<p>原则：<strong>凡是要碰飞书 API，100% 走 lark-cli</strong>，不自己写 HTTP / OAuth。recall skill 默认完全本地，<code>--live</code> 走 lark-cli。</p>
+<table>
+<thead><tr><th>场景</th><th>是否走 lark-cli</th><th>命令</th></tr></thead>
+<tbody>
+<tr><td>默认 search / get（从 manifest）</td><td>否</td><td>—</td></tr>
+<tr><td><code>--live</code> search 兜底</td><td>是</td><td><code>lark-cli wiki +node-search --query "&lt;q&gt;" --space-id &lt;sid&gt;</code></td></tr>
+<tr><td><code>--live</code> get 拉最新 docx</td><td>是</td><td><code>lark-cli docs +fetch --doc &lt;objToken&gt; --api-version v2 --doc-format markdown</code></td></tr>
+<tr><td><code>--live</code> 失败处理</td><td>—</td><td>静默降级到本地 manifest，stderr warning 一次</td></tr>
+</tbody>
+</table>
+
+<h2 id="sync-changes">8. sync skill 端的改动（最小侵入）</h2>
+<ol>
+<li><strong>新增</strong> <code>src/manifest.ts</code> — 纯函数，输入 dereferenced API + sync-lock + node-map，输出 Manifest 对象。单测好写。</li>
+<li><strong>修改</strong> <code>src/commands/sync-endpoint.ts</code> <code>runEndpointSync</code> 末尾：累积所有 endpoint 的 metadata + schema，在 sync 完成且非 dryRun 时调用 <code>writeManifest()</code>。</li>
+<li><strong>新增</strong> <code>src/commands/manifest.ts</code> + <code>openapi-lark manifest</code> 命令：不 sync、不推飞书，只重生 manifest（用 sync-lock + node-map 里已有的 nodeToken/url 信息，加上重新 dereference 的 spec）。useful for: spec 改了但还没 sync，本地想先让 AI 用新 manifest。</li>
+<li><strong>新增</strong> <code>schemas/manifest.v1.schema.json</code> — JSON Schema 文件，给 recall skill 验证用。</li>
+<li><strong>CHANGELOG</strong> 加一段：每次 sync 末尾会写 manifest.json；可被 openapi-lark-recall 消费。</li>
+</ol>
+
+<h2 id="recall-impl">9. recall skill 实现拆分（全新 repo）</h2>
+<p>仓库 <code>leeguooooo/openapi-lark-recall</code>，TypeScript，ESM，包名 <code>openapi-lark-recall</code>。</p>
+<pre><code>openapi-lark-recall/
+├── src/
+│   ├── cli.ts              # commander, two commands: mcp / manifest
+│   ├── commands/
+│   │   ├── mcp-server.ts   # 启动 stdio MCP server, 注册 4 tools
+│   │   └── manifest.ts     # 调 openapi-lark CLI 触发 regen（如果装了）
+│   ├── manifest/
+│   │   ├── load.ts         # 读 .openapi-lark/manifest.json，校验 schema
+│   │   ├── search.ts       # 关键词 + 加权评分
+│   │   └── types.ts        # 本地 TS 类型，跟 openapi-lark 的 schemas 一致
+│   ├── live/
+│   │   ├── lark-cli.ts     # 子进程封装：node-search / docs+fetch
+│   │   └── fallback.ts     # live 失败时降级到本地的逻辑
+│   ├── mcp/
+│   │   ├── server.ts       # @modelcontextprotocol/sdk Server 实例
+│   │   └── tools/
+│   │       ├── list-services.ts
+│   │       ├── list-endpoints.ts
+│   │       ├── search-endpoints.ts
+│   │       └── get-endpoint.ts
+│   └── index.ts
+├── schemas/
+│   └── manifest.v1.schema.json  # copy from openapi-lark
+├── test/                       # vitest, 4 tool 的 happy path
+├── SKILL.md                    # 飞书 / lark CLI / openapi-lark 生态触发词
+├── README.md
+├── package.json
+└── tsconfig.json</code></pre>
+
+<p><strong>依赖</strong>：<code>@modelcontextprotocol/sdk</code>（stdio transport），<code>commander</code> 或 <code>cac</code>，<code>ajv</code> 校验 manifest schema。<strong>不依赖</strong> openapi-lark（仅依赖 manifest.json 文件契约）。</p>
+
+<h2 id="search-ranking">10. 关键词搜索 + 排序</h2>
+<p>不引入 BM25 / TF-IDF / 向量嵌入。简单加权够用。</p>
+<pre><code>score(endpoint, queryTokens) =
+    3 * count(token ∈ path)
+  + 2 * count(token ∈ summary)
+  + 2 * count(token ∈ operationId)
+  + 1 * count(token ∈ descriptionFirstLine)
+  + 1 * count(token ∈ requestBodyShape ∪ responseShape)
+  + 1 * count(token ∈ tagId)
+
+filter: method? tag? service? 命中过滤
+sort:   score desc
+limit:  默认 10, 最多 50</code></pre>
+<p>实测 200 endpoint 关键词搜在 V8 上 &lt; 5ms，完全足够 MCP tool roundtrip 体验。</p>
+
+<h2 id="config-examples">11. 用户配置范例</h2>
+<h3>Claude Code（项目级 <code>.claude/mcp.json</code>）</h3>
+<pre><code>{
+  "mcpServers": {
+    "forecast-api-recall": {
+      "command": "npx",
+      "args": ["-y", "openapi-lark-recall", "mcp"],
+      "cwd": "/Users/leo/tk.com/forecast-market-api"
+    }
+  }
+}</code></pre>
+
+<h3>Cursor / Trae（同上格式）</h3>
+<p>用 <code>cwd</code> 让 recall 知道去哪找 <code>.openapi-lark/manifest.json</code>。多项目挂多个 entry，工具名通过 server 名（<code>forecast-api-recall</code> / <code>admin-api-recall</code>）区分。</p>
+
+<h3>启用 live 模式</h3>
+<pre><code>"args": ["-y", "openapi-lark-recall", "mcp", "--live"]</code></pre>
+<p>此时 search/get 会用 lark-cli 兜底，需要 lark-cli 已登录并有 <code>wiki:node:retrieve</code> + <code>docx:document:readonly</code> scope。</p>
+
+<h2 id="errors">12. 错误处理 / 版本契约</h2>
+<table>
+<thead><tr><th>失败模式</th><th>recall 行为</th></tr></thead>
+<tbody>
+<tr><td>manifest.json 不存在</td><td>退出非零；提示用户先跑 <code>openapi-lark sync</code> 或 <code>openapi-lark manifest</code></td></tr>
+<tr><td>manifest version mismatch</td><td>退出非零；提示升级 recall 或 regen manifest</td></tr>
+<tr><td>manifest JSON Schema 验证失败</td><td>退出非零；打印第一个错误字段</td></tr>
+<tr><td>get_endpoint 找不到 method+path</td><td>返回 MCP error（不抛进程），AI 拿到 "endpoint not found"</td></tr>
+<tr><td><code>--live</code> 调 lark-cli 超时</td><td>stderr warn，降级到本地 manifest</td></tr>
+<tr><td><code>--live</code> 调 lark-cli 鉴权失败</td><td>stderr warn 一次，本次进程后续不再尝试 live</td></tr>
+</tbody>
+</table>
+
+<h2 id="testing">13. 测试策略</h2>
+<ul>
+<li><strong>sync skill</strong>：<code>test/manifest.test.ts</code> — manifest 生成单测，输入构造的 dereferenced API + sync-lock + node-map，断言 manifest 各字段</li>
+<li><strong>recall skill / search</strong>：<code>test/search.test.ts</code> — 排序加权单测，构造 manifest，验证 query 返回顺序</li>
+<li><strong>recall skill / schema 校验</strong>：<code>test/manifest-load.test.ts</code> — 各种坏 manifest（缺字段 / 版本错 / json 坏）触发预期错误</li>
+<li><strong>recall skill / MCP roundtrip</strong>：<code>test/mcp-roundtrip.test.ts</code> — 起 stdio server，从 stdin 发 list_tools / call_tool，断言 response。每个 tool 一个 happy-path</li>
+<li><strong>recall skill / live mode</strong>：<code>test/live-fallback.test.ts</code> — fake lark-cli 模拟超时 / 鉴权失败，验证降级</li>
+</ul>
+
+<h2 id="out-of-scope">14. 明确不做（v0.3）</h2>
+<table>
+<thead><tr><th>项</th><th>原因</th></tr></thead>
+<tbody>
+<tr><td>跨项目联邦 / 中心索引</td><td>v0.4+，先把单项目场景验证好</td></tr>
+<tr><td>语义搜索 / embeddings</td><td>&lt; 500 endpoint 关键词够用，避免引入 sqlite / sentence-transformers 重依赖</td></tr>
+<tr><td><code>generate_code_sample(method, path, lang)</code></td><td>v0.4 候选；要 widdershins 之外的 codegen，工程量大</td></tr>
+<tr><td>HTTP / SSE transport</td><td>stdio 够用，HTTP 等真有跨机器需求</td></tr>
+<tr><td>鉴权 / token gate</td><td>本地 stdio 无需，跨网络部署再说</td></tr>
+<tr><td>飞书 wiki 反向写回 manifest</td><td>方向反了；manifest 是 sync 输出，不是输入</td></tr>
+<tr><td>mode: tree 支持</td><td>tree 模式没有 leaf 级 md，AI recall 意义小；只覆盖 mode: endpoint</td></tr>
+<tr><td>endpoint similar / related</td><td>v0.4 候选</td></tr>
+</tbody>
+</table>
+
+<h2 id="risks">15. 风险与未解</h2>
+<ul>
+<li><strong>manifest 大小爆炸</strong>：dereferenced schema 递归型可能很大。预案：观察实际项目（forecast-market-api ~50 endpoints 估计 &lt; 2MB），超 10MB 再加 schema 引用计数 / 拆文件。</li>
+<li><strong>multi-tenant 项目</strong>：一个仓库多个 service 时 cwd 仅指 repo root 没问题，server 端按 service 切片。</li>
+<li><strong>recall skill 跟 openapi-lark 的版本兼容</strong>：靠 manifest schema version 字段强校验。版本 1 期间不破坏字段，加字段允许（recall 忽略未知）。</li>
+<li><strong>lark-cli 升级破坏 live 模式</strong>：live 是兜底不是核心，破了静默降级，CI 不会因此挂。</li>
+<li><strong>schemas/manifest.v1.schema.json 跨 repo 漂移</strong>：每次 openapi-lark 改 manifest 时手动 copy 到 recall repo，并在 recall release notes 写清。后续若漂移频繁，再考虑发 <code>@leeguoooo/openapi-lark-manifest-schema</code> npm 包。</li>
+<li><strong>用户实际场景验证</strong>：v0.3 发布后需要在 forecast-market-api 真用一周，观察 AI 是否真的用上了 search / get，再决定 v0.4 优先级。</li>
+</ul>
+
+<hr>
+<p class="meta">下一步：本 spec 通过 user review 后，进入 writing-plans skill 产出实现 plan。openapi-lark 端先做（manifest 生成）→ 然后开 openapi-lark-recall 新 repo。</p>
+
+</body>
+</html>
