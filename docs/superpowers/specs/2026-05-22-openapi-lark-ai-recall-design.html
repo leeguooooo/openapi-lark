@@ -182,7 +182,7 @@ section.toc li { margin-bottom: 2px; }
 <tr><td><code>endpoints[].deprecated</code></td><td>来自 OpenAPI 标准字段 <code>operation.deprecated</code></td></tr>
 <tr><td><code>endpoints[].internal</code></td><td>来自 OpenAPI 扩展 <code>x-internal: true</code>。无该扩展时默认 false</td></tr>
 <tr><td><code>endpoints[].descriptionFirstLine</code></td><td><code>operation.description</code> 第一行（trim，最长 200 字符）</td></tr>
-<tr><td><code>endpoints[].wiki.url</code></td><td>用 sync-lock 里记的 host + nodeToken 拼。dry-run 时为空</td></tr>
+<tr><td><code>endpoints[].wiki.url</code></td><td>用 sync-lock 里记的 host + nodeToken 拼</td></tr>
 <tr><td><code>endpoints[].localMdPath</code></td><td>相对 basedir，跟 sync-endpoint.ts 里 <code>outRel</code> 同一逻辑（含 <code>.openapi-lark/</code> 前缀）</td></tr>
 <tr><td><code>endpoints[].requestBodyShape</code></td><td>requestBody schema 顶层 <code>properties</code> 的 key 数组；不递归。无 requestBody 时空数组</td></tr>
 <tr><td><code>endpoints[].responseShape.&lt;status&gt;</code></td><td>同上，按状态码（200/201/400/...）分别给出 shape</td></tr>
@@ -200,6 +200,16 @@ section.toc li { margin-bottom: 2px; }
 
 <h2 id="cli">5. recall 子命令接口</h2>
 <p>所有 recall 子命令默认输出 JSON（machine-readable）。<code>--pretty</code> 切换到 table / formatted 给人看。所有命令冷启动时读一次 manifest.json（加载 + 校验 ≈ 50–200ms），完事进程退出。</p>
+
+<h3>manifest 发现路径</h3>
+<p>每个子命令按以下优先级解析 manifest 位置：</p>
+<ol>
+<li><code>--manifest &lt;path&gt;</code> 显式 flag（最高）</li>
+<li>环境变量 <code>OPENAPI_LARK_MANIFEST</code></li>
+<li>从当前工作目录 (<code>process.cwd()</code>) 向上查找最近的 <code>.openapi-lark/manifest.json</code>（停在 git root 或文件系统根）</li>
+<li>找不到 → exit 2 + stderr 提示</li>
+</ol>
+<p>向上查找逻辑跟现有 <code>config/load.ts</code> 的 <code>.openapi-lark.yaml</code> 解析一致，复用同一 helper。</p>
 
 <table>
 <thead><tr><th>子命令</th><th>用途</th><th>关键参数</th></tr></thead>
@@ -227,38 +237,87 @@ section.toc li { margin-bottom: 2px; }
 </tbody>
 </table>
 
-<h3>输出示例（search）</h3>
-<pre><code>$ openapi-lark recall search "isFirstPredict" --service forecast-market-api
+<h3>输出 schema — <code>list-services</code></h3>
+<pre><code>$ openapi-lark recall list-services
+{
+  "services": [
+    {
+      "name": "forecast-market-api",
+      "endpointCount": 52,
+      "specPath": "api/openapi.yaml",
+      "specSha256": "abc123...",
+      "generatedAt": "2026-05-22T01:30:00Z"
+    }
+  ]
+}</code></pre>
+
+<h3>输出 schema — <code>list-endpoints</code></h3>
+<pre><code>$ openapi-lark recall list-endpoints --service forecast-market-api
+{
+  "service": "forecast-market-api",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/predicts",
+      "operationId": "createPredict",
+      "summary": "创建预测（下注）",
+      "tagId": "games",
+      "deprecated": false,
+      "internal": false,
+      "wikiUrl": "https://portwind.jp.larksuite.com/wiki/MnaidT2w...",
+      "syncStatus": "ok"
+    }
+  ],
+  "total": 52
+}</code></pre>
+
+<h3>输出 schema — <code>search</code></h3>
+<pre><code>$ openapi-lark recall search "isFirstPredict"
 {
   "query": "isFirstPredict",
   "hits": [
     {
-      "method": "POST", "path": "/api/v1/predicts",
+      "service": "forecast-market-api",   // ← 必有，跨服务搜索时 AI 拿这个去 get
+      "method": "POST",
+      "path": "/api/v1/predicts",
       "summary": "创建预测（下注）",
+      "tagId": "games",
       "score": 6,
       "matchedIn": ["responseShape"],
       "wikiUrl": "https://...",
-      "tagId": "games"
+      "deprecated": false
     }
   ],
   "total": 1,
   "limit": 10
 }</code></pre>
 
-<h3>输出示例（get）</h3>
+<h3>输出 schema — <code>get</code></h3>
+<p>返回 manifest 中该 endpoint 的<strong>全部字段</strong>，再附加 <code>markdownContent</code>（从 <code>localMdPath</code> 读出的本地 md 内容）。如果 <code>localMdPath</code> 文件不存在，<code>markdownContent: null</code> + <code>missingReason</code> 字段。</p>
 <pre><code>$ openapi-lark recall get POST /api/v1/predicts --service forecast-market-api
 {
-  "method": "POST", "path": "/api/v1/predicts",
-  "summary": "创建预测（下注）",
+  "service": "forecast-market-api",
+  "method": "POST",
+  "path": "/api/v1/predicts",
   "operationId": "createPredict",
+  "tagId": "games",
+  "groupKey": "predicts",
+  "summary": "创建预测（下注）",
+  "descriptionFirstLine": "用户对某场比赛下注...",
   "deprecated": false,
-  "wiki": { "url": "...", "nodeToken": "..." },
-  "requestBodySchema": { /* JSON Schema */ },
+  "internal": false,
+  "wiki": { "nodeToken": "MnaidT2w...", "objToken": "DrW7d...", "url": "..." },
+  "localMdPath": ".openapi-lark/forecast-market-api/games/predicts/创建预测_POST_api_v1_predicts.md",
+  "requestBodyShape": ["amount", "predictId", "side"],
+  "responseShape": { "200": ["isFirstPredict", "predictId", "balance"] },
+  "requestBodySchema": { /* full dereferenced JSON Schema */ },
   "responseSchemas": { "200": { ... }, "400": { ... } },
   "markdownContent": "# 创建预测...\n\n## 请求参数\n...",
   "syncStatus": "ok",
   "lastSuccessfulSyncAt": "2026-05-22T01:30:00Z"
 }</code></pre>
+
+<aside class="note"><code>markdownContent</code> 是 <strong>recall get 运行时</strong>从 <code>localMdPath</code> 读取的派生字段，<strong>不存</strong>在 manifest.json 里（避免数据冗余 + 漂移）。<code>--live</code> 模式下用 lark-cli docs +fetch 拉到的内容覆盖此字段；live 失败时静默降级回读 localMdPath。</aside>
 
 <h2 id="lark-cli">6. lark-cli 边界（--live）</h2>
 <p>原则：<strong>凡是要碰飞书 API，100% 走 lark-cli</strong>。recall 默认完全本地（不调 lark-cli），<code>--live</code> 走 lark-cli 拉最新。</p>
@@ -268,7 +327,7 @@ section.toc li { margin-bottom: 2px; }
 <tbody>
 <tr><td>默认 search / list / get（从 manifest）</td><td>否</td><td>—</td></tr>
 <tr><td><code>get --live</code> 拉最新 docx</td><td>是</td><td><code>lark-cli docs +fetch --doc &lt;objToken&gt; --api-version v2</code>（lark-doc v2 skill 返回 Lark-flavored markdown）</td></tr>
-<tr><td><code>--live</code> 失败处理</td><td>—</td><td>静默降级到本地 manifest 的 markdownContent，stderr warn 一次</td></tr>
+<tr><td><code>--live</code> 失败处理</td><td>—</td><td>静默降级回读 <code>localMdPath</code> 本地 md 文件作为 <code>markdownContent</code>，stderr warn 一次</td></tr>
 </tbody>
 </table>
 
@@ -310,6 +369,16 @@ section.toc li { margin-bottom: 2px; }
 
 <h2 id="search-ranking">9. 关键词搜索 + 排序</h2>
 <p>不引入 BM25 / TF-IDF / 向量嵌入。简单加权够用。</p>
+
+<h3>分词规则</h3>
+<ul>
+<li><strong>大小写</strong>：折叠到小写后比较</li>
+<li><strong>路径分隔符</strong>：path 被 <code>/</code> 切分，例如 <code>/api/v1/predicts</code> → <code>["api", "v1", "predicts"]</code></li>
+<li><strong>camelCase</strong>：字段名按 camelCase 拆词，<code>isFirstPredict</code> → <code>["is", "first", "predict", "isfirstpredict"]</code>（同时保留原 token，避免精确匹配丢失）</li>
+<li><strong>中英文</strong>：query 中文按整段匹配（不切字），如 <code>"创建预测"</code> 直接在 summary / descriptionFirstLine 里查 substring；英文按空白 + 标点切分</li>
+<li><strong>停用词</strong>：v0.3 不做停用词过滤（语料小，无明显噪声）</li>
+</ul>
+
 <pre><code>score(endpoint, queryTokens) =
     3 * count(token ∈ path)
   + 2 * count(token ∈ summary)
