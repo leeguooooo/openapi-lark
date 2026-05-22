@@ -3,7 +3,14 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { extractDocToken, readOpenapiTitle, runInit, diagnoseOpenapiSource } from '../src/commands/init.js';
+import {
+  extractDocToken,
+  readOpenapiTitle,
+  runInit,
+  diagnoseOpenapiSource,
+  buildClaudeMdSection,
+  injectClaudeMd,
+} from '../src/commands/init.js';
 
 describe('extractDocToken', () => {
   it('extracts from feishu.cn /docx/', () => {
@@ -244,5 +251,163 @@ describe('diagnoseOpenapiSource', () => {
   it('survives unreadable package.json', () => {
     writeFileSync(join(workdir, 'package.json'), '{ not valid json');
     expect(() => diagnoseOpenapiSource(workdir)).not.toThrow();
+  });
+});
+
+describe('buildClaudeMdSection', () => {
+  it('local openapi → Read 提示 + lark-cli drive +search 命令', () => {
+    const s = buildClaudeMdSection({
+      serviceName: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    expect(s).toContain('api/openapi.yaml');
+    expect(s).toContain('本地文件');
+    expect(s).toContain('Read');
+    expect(s).toContain('https://feishu.cn/wiki/abcd1234abcd');
+    expect(s).toContain('lark-cli drive +search');
+    expect(s).toContain('lark-cli docs +fetch');
+    expect(s).toContain('openapi-lark sync');
+  });
+
+  it('URL openapi → curl 提示而不是 Read', () => {
+    const s = buildClaudeMdSection({
+      serviceName: 'svc',
+      openapi: 'https://api.example.com/openapi.json',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    expect(s).toContain('HTTP URL');
+    expect(s).toContain('curl');
+    expect(s).not.toContain('直接 Read');
+  });
+
+  it('begin/end markers 都在', () => {
+    const s = buildClaudeMdSection({
+      serviceName: 'svc',
+      openapi: 'x',
+      docUrl: 'https://feishu.cn/wiki/aaaaaaaa',
+    });
+    expect(s.startsWith('<!-- openapi-lark:claude-md:begin -->')).toBe(true);
+    expect(s.endsWith('<!-- openapi-lark:claude-md:end -->')).toBe(true);
+  });
+});
+
+describe('injectClaudeMd', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'oal-claudemd-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('creates CLAUDE.md when absent', () => {
+    const action = injectClaudeMd({
+      basedir: dir,
+      serviceName: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    expect(action).toBe('created');
+    const content = readFileSync(join(dir, 'CLAUDE.md'), 'utf8');
+    expect(content).toContain('<!-- openapi-lark:claude-md:begin -->');
+    expect(content).toContain('<!-- openapi-lark:claude-md:end -->');
+    expect(content).toContain('api/openapi.yaml');
+  });
+
+  it('appends managed block to existing CLAUDE.md', () => {
+    writeFileSync(join(dir, 'CLAUDE.md'), '# Existing\n\nUser content.\n');
+    const action = injectClaudeMd({
+      basedir: dir,
+      serviceName: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    expect(action).toBe('updated');
+    const content = readFileSync(join(dir, 'CLAUDE.md'), 'utf8');
+    expect(content).toContain('# Existing');
+    expect(content).toContain('User content.');
+    expect(content).toContain('<!-- openapi-lark:claude-md:begin -->');
+  });
+
+  it('replaces existing managed block in place (idempotent on second run)', () => {
+    writeFileSync(
+      join(dir, 'CLAUDE.md'),
+      '# Top\n\n<!-- openapi-lark:claude-md:begin -->\nOLD CONTENT\n<!-- openapi-lark:claude-md:end -->\n\n## Bottom\n\nuser tail\n',
+    );
+    injectClaudeMd({
+      basedir: dir,
+      serviceName: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    const content = readFileSync(join(dir, 'CLAUDE.md'), 'utf8');
+    expect(content).toContain('# Top');
+    expect(content).toContain('## Bottom');
+    expect(content).toContain('user tail');
+    expect(content).not.toContain('OLD CONTENT');
+    expect(content).toContain('api/openapi.yaml');
+    // Run again — should yield "unchanged"
+    const second = injectClaudeMd({
+      basedir: dir,
+      serviceName: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    expect(second).toBe('unchanged');
+  });
+
+  it('preserves user content outside the markers when refreshing', () => {
+    writeFileSync(
+      join(dir, 'CLAUDE.md'),
+      'header before\n\n<!-- openapi-lark:claude-md:begin -->\nfoo\n<!-- openapi-lark:claude-md:end -->\n\nFOOTER PRESERVE ME\n',
+    );
+    injectClaudeMd({
+      basedir: dir,
+      serviceName: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+    });
+    const content = readFileSync(join(dir, 'CLAUDE.md'), 'utf8');
+    expect(content).toContain('header before');
+    expect(content).toContain('FOOTER PRESERVE ME');
+  });
+});
+
+describe('runInit (CLAUDE.md injection wiring)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'oal-runinit-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes both .openapi-lark.yaml and CLAUDE.md by default', async () => {
+    const cfg = join(dir, '.openapi-lark.yaml');
+    const code = await runInit({
+      name: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+      configPath: cfg,
+    });
+    expect(code).toBe(0);
+    const yamlText = readFileSync(cfg, 'utf8');
+    expect(yamlText).toContain('name: svc');
+    const claudeMd = readFileSync(join(dir, 'CLAUDE.md'), 'utf8');
+    expect(claudeMd).toContain('lark-cli drive +search');
+  });
+
+  it('skips CLAUDE.md when injectClaudeMd: false', async () => {
+    const cfg = join(dir, '.openapi-lark.yaml');
+    const code = await runInit({
+      name: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+      configPath: cfg,
+      injectClaudeMd: false,
+    });
+    expect(code).toBe(0);
+    expect(() => readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toThrow();
   });
 });

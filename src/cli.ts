@@ -68,17 +68,28 @@ async function main(): Promise<void> {
     .requiredOption('--openapi <path>', 'path to openapi.yaml (relative to config)')
     .requiredOption('--doc-url <url>', 'Feishu docx URL; docToken is extracted from it')
     .option('--config <path>', 'config path (default: ./.openapi-lark.yaml)')
-    .action(async (opts: { name: string; openapi: string; docUrl: string; config?: string }) => {
-      const code = await runInit({
-        name: opts.name,
-        openapi: opts.openapi,
-        docUrl: opts.docUrl,
-        configPath: opts.config
-          ? resolve(opts.config)
-          : resolve(process.cwd(), '.openapi-lark.yaml'),
-      });
-      process.exit(code);
-    });
+    .option('--no-claude-md', 'skip CLAUDE.md hint injection (default: inject managed section)')
+    .action(
+      async (opts: {
+        name: string;
+        openapi: string;
+        docUrl: string;
+        config?: string;
+        claudeMd?: boolean;
+      }) => {
+        const code = await runInit({
+          name: opts.name,
+          openapi: opts.openapi,
+          docUrl: opts.docUrl,
+          configPath: opts.config
+            ? resolve(opts.config)
+            : resolve(process.cwd(), '.openapi-lark.yaml'),
+          // commander's `--no-X` flips claudeMd to false; default is true.
+          injectClaudeMd: opts.claudeMd !== false,
+        });
+        process.exit(code);
+      },
+    );
 
   program
     .command('lint [service]')

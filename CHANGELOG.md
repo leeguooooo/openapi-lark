@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — init 注入 CLAUDE.md + 稳定身份匹配根治 zombie wiki 节点
+
+### `init` 现在会自动注入 CLAUDE.md 段（AI 可读引导）
+
+`openapi-lark init` 在写 `.openapi-lark.yaml` 时，**同时往项目根 `CLAUDE.md` 注入一段 openapi-lark 管理块**，告诉 AI agent 怎么查项目接口：
+
+- 直接 Read 本地 OpenAPI spec 文件（小项目最快路径）
+- 用 `lark-cli drive +search --query "<关键字>"` 搜飞书 wiki 镜像（path / 中文 summary / 单词都能命中）
+- 用 `lark-cli docs +fetch --doc <token> --api-version v2` 取单文档全文
+
+特性：
+- **幂等**：begin/end marker 之间替换；marker 之外用户内容原封保留
+- **opt-out**：`init --no-claude-md` 跳过
+- **URL 型 openapi 自动切提示**：从 Read 切到 curl
+
+这是 v0.3 AI-recall 设计被砍后的轻量替代。完整决策记录见 `docs/superpowers/specs/2026-05-22-openapi-lark-ai-recall-design.html`。砍掉理由：实测 `lark-cli drive +search` 精度并不差（5 个 query 验证），且小项目 AI 直接 Read spec 完全够用，原 manifest + recall 子命令组在当前规模下是过度设计。
+
 ## Unreleased — 稳定身份匹配，根治 zombie wiki 节点
 
 修复 sync 改 OpenAPI `summary` / `tagAlias` 会产生 zombie wiki 节点的 bug。
