@@ -348,7 +348,7 @@ limit:  默认 10, 最多 50</code></pre>
 
 <h3>启用 live 模式</h3>
 <pre><code>"args": ["-y", "openapi-lark-recall", "mcp", "--live"]</code></pre>
-<p>此时 search/get 会用 lark-cli 兜底，需要 lark-cli 已登录并有 <code>wiki:node:retrieve</code> + <code>docx:document:readonly</code> scope。</p>
+<p>此时 search/get 会用 lark-cli 兜底，需要 lark-cli 已登录并有 §7 列出的同一组 scope：<code>wiki:wiki:readonly</code> + <code>docx:document:readonly</code> + <code>drive:drive:readonly</code>。未登录或缺 scope 时 recall 静默降级到本地（见 §7 / §12）。</p>
 
 <h2 id="errors">12. 错误处理 / 版本契约</h2>
 <table>
