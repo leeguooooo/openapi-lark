@@ -238,7 +238,7 @@ section.toc li { margin-bottom: 2px; }
 <td><code>search_endpoints</code></td>
 <td><code>{ query, service?, method?, tag?, limit=10 }</code></td>
 <td>按相关性排序的命中数组（见 §10）</td>
-<td>同 default + <code>lark-cli drive +search --query &lt;q&gt; --doc-types wiki,docx --space-ids &lt;sid&gt;</code> 命中并集</td>
+<td>同 default + <code>lark-cli drive +search --query &lt;q&gt; --doc-types wiki --space-ids &lt;sid&gt;</code> 命中并集（详见 §7：<code>--space-ids</code> 仅作用于 wiki 类型）</td>
 </tr>
 <tr>
 <td><code>get_endpoint</code></td>
@@ -381,7 +381,7 @@ limit:  默认 10, 最多 50</code></pre>
   "id": 42,
   "error": {
     "code": -32603,
-    "message": "manifest.json not found at ./openapi-lark/manifest.json — run `openapi-lark sync` or `openapi-lark manifest` first"
+    "message": "manifest.json not found at .openapi-lark/manifest.json — run `openapi-lark sync` or `openapi-lark manifest` first"
   }
 }</code></pre>
 
