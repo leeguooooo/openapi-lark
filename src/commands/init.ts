@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { Document, parse as parseYaml, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
 import { EXIT_CONFIG, EXIT_OK } from '../types.js';
 
 /**
@@ -252,46 +252,51 @@ export async function runInit(args: InitArgs): Promise<number> {
   }
 
   const configPath = resolve(args.configPath);
-  let doc: Record<string, unknown> = {};
+  // Use parseDocument (not parse) so existing comments survive the rewrite.
+  // parseYaml() returns a plain JS object that loses comments on stringify;
+  // observed 2026-05-22 when dogfooding on forecast-market-api (.openapi-lark.yaml
+  // had explanatory comments about openapi:update flow that got silently wiped).
+  let doc: Document;
   if (existsSync(configPath)) {
     const raw = readFileSync(configPath, 'utf8');
-    const parsed = parseYaml(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      doc = parsed as Record<string, unknown>;
+    try {
+      doc = parseDocument(raw);
+      // Defensive: if file is empty / not a mapping, start fresh
+      if (!(doc.contents instanceof YAMLMap)) {
+        doc = new Document({});
+      }
+    } catch {
+      doc = new Document({});
     }
+  } else {
+    doc = new Document({});
   }
 
-  if (!doc.engines || typeof doc.engines !== 'object') {
+  if (!doc.has('engines')) {
     // `auth check` was added in lark-cli 1.0.34; doctor's real scope preflight
     // depends on it. Lower constraints will work but with degraded UX (doctor
     // marks scope check as skipped instead of pass/fail).
-    doc.engines = { larkCli: '>=1.0.34' };
+    doc.set('engines', { larkCli: '>=1.0.34' });
   }
-  const services = Array.isArray(doc.services)
-    ? (doc.services as Array<Record<string, unknown>>)
-    : [];
-  const idx = services.findIndex((s) => s.name === args.name);
+
+  let services = doc.get('services') as YAMLSeq | undefined;
+  if (!(services instanceof YAMLSeq)) {
+    services = new YAMLSeq();
+    doc.set('services', services);
+  }
+  const idx = services.items.findIndex(
+    (item: unknown) => item instanceof YAMLMap && item.get('name') === args.name,
+  );
+
   // Defaults aligned with SKILL.md recommendation:
   //   - mode: endpoint  (one wiki node per (path, method) — best for cross-project lookup)
   //   - parentTitle    (locks wiki node title against accidental edits; only set when we can
   //                     read it from info.title — URL openapi / missing file → skip silently)
-  const entry: Record<string, unknown> = {
-    name: args.name,
-    openapi: args.openapi,
-    mode: 'endpoint',
-    docToken,
-  };
-  // For local file paths, sniff title from info.title and run a project-source
-  // diagnostic if the file is missing (so the user has a path forward).
-  // URL sources skip both — we don't fetch in init.
   let title: string | null = null;
   if (!isHttpUrl(args.openapi)) {
     const openapiAbs = resolve(args.openapi);
     title = readOpenapiTitle(openapiAbs);
-    if (title) entry.parentTitle = title;
     if (!existsSync(openapiAbs)) {
-      // Diagnose against the config's basedir (where the yaml will be written).
-      // That's the project root the user is running init from.
       const basedir = dirname(resolve(args.configPath));
       const hints = diagnoseOpenapiSource(basedir);
       process.stderr.write(
@@ -304,16 +309,29 @@ export async function runInit(args: InitArgs): Promise<number> {
       );
     }
   }
-  if (idx >= 0) {
-    // Preserve user-edited keys not in our defaults (e.g. render.engine)
-    services[idx] = { ...services[idx], ...entry };
-  } else {
-    services.push(entry);
-  }
-  doc.services = services;
 
-  const yaml = stringifyYaml(doc, { lineWidth: 0 });
-  writeFileSync(configPath, yaml, 'utf8');
+  const entryFields: Array<[string, unknown]> = [
+    ['name', args.name],
+    ['openapi', args.openapi],
+    ['mode', 'endpoint'],
+    ['docToken', docToken],
+  ];
+  if (title) entryFields.push(['parentTitle', title]);
+
+  if (idx >= 0) {
+    // Merge into existing map — preserves user-edited keys (e.g. render.engine,
+    // tagAliases, includeTags). New defaults overwrite same-named keys.
+    const existing = services.items[idx] as YAMLMap;
+    for (const [k, v] of entryFields) existing.set(k, v);
+  } else {
+    // Append fresh entry
+    const newEntry = new YAMLMap();
+    for (const [k, v] of entryFields) newEntry.set(k, v);
+    services.add(newEntry);
+  }
+
+  // Document.toString preserves the source comments we parsed in above.
+  writeFileSync(configPath, doc.toString({ lineWidth: 0 }), 'utf8');
   process.stdout.write(
     `[init] wrote ${configPath}\n` +
       `       service "${args.name}" -> docToken ${docToken}\n` +

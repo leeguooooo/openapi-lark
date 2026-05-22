@@ -410,4 +410,45 @@ describe('runInit (CLAUDE.md injection wiring)', () => {
     expect(code).toBe(0);
     expect(() => readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toThrow();
   });
+
+  it('preserves yaml comments when re-running init on existing config', async () => {
+    // Regression: parseYaml + stringifyYaml drops comments. Use parseDocument
+    // instead. Observed 2026-05-22 dogfooding on forecast-market-api whose
+    // .openapi-lark.yaml had explanatory comments about openapi:update flow.
+    const cfg = join(dir, '.openapi-lark.yaml');
+    writeFileSync(
+      cfg,
+      [
+        'engines:',
+        '  larkCli: ">=1.0.34"',
+        '',
+        '# 这条注释解释了为什么有 snapshot.json',
+        '# 不要丢',
+        'services:',
+        '  - name: svc',
+        '    openapi: api/openapi.yaml',
+        '    docToken: abcd1234abcd',
+        '    mode: endpoint',
+        '    # 这条注释贴在 tagAliases 上方',
+        '    tagAliases:',
+        '      foo: 中文别名',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const code = await runInit({
+      name: 'svc',
+      openapi: 'api/openapi.yaml',
+      docUrl: 'https://feishu.cn/wiki/abcd1234abcd',
+      configPath: cfg,
+      injectClaudeMd: false, // 隔离测 yaml 行为
+    });
+    expect(code).toBe(0);
+    const out = readFileSync(cfg, 'utf8');
+    expect(out).toContain('# 这条注释解释了为什么有 snapshot.json');
+    expect(out).toContain('# 不要丢');
+    expect(out).toContain('# 这条注释贴在 tagAliases 上方');
+    // 用户的 tagAliases 也保留
+    expect(out).toContain('foo: 中文别名');
+  });
 });
