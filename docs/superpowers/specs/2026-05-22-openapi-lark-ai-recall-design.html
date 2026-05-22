@@ -193,6 +193,29 @@ section.toc li { margin-bottom: 2px; }
 
 <aside class="warn"><strong>大小预估</strong>：单 endpoint 含完整 dereferenced schema 可能 5–30KB。200 endpoints 的 manifest.json 估计 1–5MB。<strong>不分文件</strong>，MCP server 一次性载入；如果未来突破 10MB 再考虑分片。</aside>
 
+<h3>字段语义细则</h3>
+<table>
+<thead><tr><th>字段</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>services.&lt;svc&gt;.specPath</code></td><td>本地文件时是相对 basedir 的路径；URL 型 openapi 时直接存原始 URL（含 scheme）</td></tr>
+<tr><td><code>services.&lt;svc&gt;.specSha256</code></td><td>始终是 <strong>resolved + dereferenced</strong> spec JSON 的 sha256（不是源文件的 sha）。URL 和本地文件统一这条规则，方便检测 spec 变化</td></tr>
+<tr><td><code>endpoints[].deprecated</code></td><td>来自 OpenAPI 标准字段 <code>operation.deprecated</code></td></tr>
+<tr><td><code>endpoints[].internal</code></td><td>来自 OpenAPI 扩展 <code>x-internal: true</code>（boolean）。无该扩展时默认 false。沿用 widdershins / Stoplight 社区惯例</td></tr>
+<tr><td><code>endpoints[].descriptionFirstLine</code></td><td>OpenAPI <code>operation.description</code> 第一行（split by <code>\n</code> 取 [0]，trim，不超过 200 字符）</td></tr>
+<tr><td><code>endpoints[].wiki.url</code></td><td>用 sync-lock 里记的 host + nodeToken 拼。dry-run 时为空字符串</td></tr>
+<tr><td><code>endpoints[].localMdPath</code></td><td>相对 basedir 的相对路径，跟 sync-endpoint.ts 里 <code>outRel</code> 用同一逻辑</td></tr>
+<tr><td><code>endpoints[].requestBodyShape</code></td><td>requestBody schema 顶层 <code>properties</code> 的 key 数组；不递归。无 requestBody 时空数组</td></tr>
+<tr><td><code>endpoints[].responseShape.&lt;status&gt;</code></td><td>同上，按状态码（200/201/400/...）分别给出 shape</td></tr>
+</tbody>
+</table>
+
+<h3>v1 加字段规则（forward compatibility）</h3>
+<ul>
+<li>v1 期间：<strong>只允许加字段，不允许删 / 改语义</strong>。recall 校验时遇到未知字段一律忽略</li>
+<li>删字段或语义变更：必须 bump 到 v2，并在 spec 文档单开 migration note</li>
+<li>recall 启动时调 ajv 验 manifest schema；version mismatch 或 schema 失败 → 退出非零，stderr 指明 regen 命令</li>
+</ul>
+
 <h2 id="mcp-tools">6. MCP tool 接口</h2>
 <p>命名规范：snake_case（MCP 生态主流）。零冲突于 lark-openapi-mcp 的 <code>im.v1.*</code> 命名空间。</p>
 
@@ -215,13 +238,13 @@ section.toc li { margin-bottom: 2px; }
 <td><code>search_endpoints</code></td>
 <td><code>{ query, service?, method?, tag?, limit=10 }</code></td>
 <td>按相关性排序的命中数组（见 §10）</td>
-<td>同 default + <code>lark-cli wiki +node-search --query &lt;q&gt;</code> 命中并集</td>
+<td>同 default + <code>lark-cli drive +search --query &lt;q&gt; --doc-types wiki,docx --space-ids &lt;sid&gt;</code> 命中并集</td>
 </tr>
 <tr>
 <td><code>get_endpoint</code></td>
 <td><code>{ service, method, path }</code></td>
 <td><code>{ ...metadata, requestBodySchema, responseSchemas, markdownContent }</code></td>
-<td>同 default，但 <code>markdownContent</code> 走 <code>lark-cli docs +fetch --doc &lt;objToken&gt;</code> 拉飞书最新</td>
+<td>同 default，但 <code>markdownContent</code> 走 <code>lark-cli docs +fetch --doc &lt;objToken&gt; --api-version v2</code> 拉飞书最新（lark-doc v2 skill 返回 Lark-flavored markdown）</td>
 </tr>
 </tbody>
 </table>
@@ -234,18 +257,29 @@ section.toc li { margin-bottom: 2px; }
 <thead><tr><th>场景</th><th>是否走 lark-cli</th><th>命令</th></tr></thead>
 <tbody>
 <tr><td>默认 search / get（从 manifest）</td><td>否</td><td>—</td></tr>
-<tr><td><code>--live</code> search 兜底</td><td>是</td><td><code>lark-cli wiki +node-search --query "&lt;q&gt;" --space-id &lt;sid&gt;</code></td></tr>
-<tr><td><code>--live</code> get 拉最新 docx</td><td>是</td><td><code>lark-cli docs +fetch --doc &lt;objToken&gt; --api-version v2 --doc-format markdown</code></td></tr>
+<tr><td><code>--live</code> search 兜底</td><td>是</td><td><code>lark-cli drive +search --query "&lt;q&gt;" --doc-types wiki --space-ids &lt;sid&gt;</code>（注意 <code>--space-ids</code> 仅作用于 wiki，因此 v0.3 只搜 wiki 节点；如果将来要扩到游离 docx，再把 doc-types 加上 docx 但去掉 space-ids）（Search v2: doc_wiki/search）</td></tr>
+<tr><td><code>--live</code> get 拉最新 docx</td><td>是</td><td><code>lark-cli docs +fetch --doc &lt;objToken&gt; --api-version v2</code>（lark-doc v2 skill 返回 Lark-flavored markdown，<code>--api-version v2</code> 必须）</td></tr>
 <tr><td><code>--live</code> 失败处理</td><td>—</td><td>静默降级到本地 manifest，stderr warning 一次</td></tr>
 </tbody>
 </table>
 
+<aside class="warn"><strong>auth 前置条件</strong>：<code>--live</code> 模式要求 lark-cli 已经 <code>auth login</code>（user 身份），且应用拥有 <code>wiki:wiki:readonly</code> + <code>docx:document:readonly</code> + <code>drive:drive:readonly</code> scope。recall 在启用 <code>--live</code> 时先跑一次 <code>lark-cli auth status</code> 自检，未登录则 stderr 提示并禁用 live 模式（仍能跑本地查询）。codex 复现过 <code>keychain not initialized</code> 错误，必须容错。</aside>
+
 <h2 id="sync-changes">8. sync skill 端的改动（最小侵入）</h2>
 <ol>
-<li><strong>新增</strong> <code>src/manifest.ts</code> — 纯函数，输入 dereferenced API + sync-lock + node-map，输出 Manifest 对象。单测好写。</li>
-<li><strong>修改</strong> <code>src/commands/sync-endpoint.ts</code> <code>runEndpointSync</code> 末尾：累积所有 endpoint 的 metadata + schema，在 sync 完成且非 dryRun 时调用 <code>writeManifest()</code>。</li>
-<li><strong>新增</strong> <code>src/commands/manifest.ts</code> + <code>openapi-lark manifest</code> 命令：不 sync、不推飞书，只重生 manifest（用 sync-lock + node-map 里已有的 nodeToken/url 信息，加上重新 dereference 的 spec）。useful for: spec 改了但还没 sync，本地想先让 AI 用新 manifest。</li>
-<li><strong>新增</strong> <code>schemas/manifest.v1.schema.json</code> — JSON Schema 文件，给 recall skill 验证用。</li>
+<li><strong>新增</strong> <code>src/manifest.ts</code> — 纯函数 <code>buildManifest(input): Manifest</code>，输入 dereferenced API + sync-lock + node-map + endpoint slices，输出完整 Manifest 对象。单测好写。</li>
+<li><strong>修改</strong> <code>src/commands/sync-endpoint.ts</code> <code>runEndpointSync</code>：</li>
+</ol>
+<table>
+<thead><tr><th>当前状态</th><th>缺什么</th><th>怎么补</th></tr></thead>
+<tbody>
+<tr><td><code>pushEndpointLeaf</code> 不返回 endpoint 的聚合元数据（objToken、localMdPath、dereferenced schema 都在内部消化掉了）</td><td>没有聚合点写 manifest</td><td>在 <code>runEndpointSync</code> 函数内声明 <code>const manifestEntries: ManifestEndpointEntry[] = []</code>；<code>pushEndpointLeaf</code> 内部 push 一条到这个数组（即使 push 失败也 push，failed entries 标 <code>syncStatus: "failed"</code>）；末尾循环全部 service 结束后调 <code>buildManifest()</code> + <code>writeManifest()</code></td></tr>
+</tbody>
+</table>
+<ol start="3">
+<li><strong>manifest 写入时机</strong>：<code>sync</code> 全部 service 都跑完后写一次（不是 per-service）。<strong>失败容忍</strong>：即使某些 leaf push 失败，只要本地 md 文件已渲染、metadata 齐全，manifest 仍写入（让 AI 至少看到部分结果，比啥都没有强）。失败 leaf 标 <code>syncStatus: "failed"</code> + <code>lastSuccessfulSyncAt</code>。dry-run 时跳过写入。</li>
+<li><strong>新增</strong> <code>src/commands/manifest.ts</code> + <code>openapi-lark manifest</code> 命令：不 sync、不推飞书，只重生 manifest。读 sync-lock + node-map 里已有的 nodeToken/url，对 spec 重新 dereference 拿到当前 schema。useful for: spec 改了但还没 sync，本地想先让 AI 用最新 manifest。</li>
+<li><strong>新增</strong> <code>schemas/manifest.v1.schema.json</code> — JSON Schema draft-07 / 2020-12，给 recall skill 验证用。</li>
 <li><strong>CHANGELOG</strong> 加一段：每次 sync 末尾会写 manifest.json；可被 openapi-lark-recall 消费。</li>
 </ol>
 
@@ -324,10 +358,32 @@ limit:  默认 10, 最多 50</code></pre>
 <tr><td>manifest version mismatch</td><td>退出非零；提示升级 recall 或 regen manifest</td></tr>
 <tr><td>manifest JSON Schema 验证失败</td><td>退出非零；打印第一个错误字段</td></tr>
 <tr><td>get_endpoint 找不到 method+path</td><td>返回 MCP error（不抛进程），AI 拿到 "endpoint not found"</td></tr>
+<tr><td>get_endpoint 命中但本地 md 文件缺失</td><td>返回结构化数据 + <code>markdownContent: null</code> + 在 metadata 里 <code>missingReason: "local md not found, run sync"</code></td></tr>
 <tr><td><code>--live</code> 调 lark-cli 超时</td><td>stderr warn，降级到本地 manifest</td></tr>
-<tr><td><code>--live</code> 调 lark-cli 鉴权失败</td><td>stderr warn 一次，本次进程后续不再尝试 live</td></tr>
+<tr><td><code>--live</code> 调 lark-cli 鉴权失败（含 keychain not initialized）</td><td>stderr warn 一次，本次进程后续不再尝试 live，直接走本地</td></tr>
 </tbody>
 </table>
+
+<h3>MCP error 形状</h3>
+<p>recall 抛错时，<strong>tool-level 错误</strong>用 MCP <code>CallToolResult.isError = true</code> + <code>content: [{ type: "text", text: "..." }]</code>，保持跟 <code>@modelcontextprotocol/sdk</code> 规范一致；<strong>protocol-level 错误</strong>（如 manifest 加载失败）用 JSON-RPC error code（-32603 internal error）+ message。绝不让进程 crash —— 一个 tool call 失败不影响其他 call。</p>
+<pre><code>// tool-level error 示例（get_endpoint 找不到）
+{
+  "isError": true,
+  "content": [{
+    "type": "text",
+    "text": "endpoint not found: POST /api/v1/predicts in service forecast-market-api"
+  }]
+}
+
+// protocol-level error 示例（manifest 缺失）
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "error": {
+    "code": -32603,
+    "message": "manifest.json not found at ./openapi-lark/manifest.json — run `openapi-lark sync` or `openapi-lark manifest` first"
+  }
+}</code></pre>
 
 <h2 id="testing">13. 测试策略</h2>
 <ul>
