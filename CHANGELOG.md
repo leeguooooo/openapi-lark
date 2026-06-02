@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — 2026-05-22
 
 ### docToken 误配防护（endpoint 模式）
 
@@ -10,6 +10,12 @@ sync 解析完父节点后，若 `docToken` 指向的节点下大多数已有子
 - 防止 zombie 报告把别的项目的正常文档误判为 zombie（将来若加 `--prune` 会很危险）
 - 纯警告不阻断；阈值保守（父节点 ≥5 个子节点且 ≥80% 外来才触发），正常项目即使有历史 zombie 也不会误报
 - 新文件 `src/lark/parent-guard.ts` + `test/parent-guard.test.ts`（8 tests）
+
+### SKILL.md 同步 v0.3 + 修错误 flag
+
+- 修 `drive +search --type docx` → `--doc-types docx`（3 处）；删不存在的 `docs +fetch --scope outline` —— 原 SKILL 写了没实测的 flag，agent 照跑会报 unknown flag
+- 补 init 的 CLAUDE.md 自动注入说明、父节点须项目专属、重跑 init 保留 yaml 注释
+- 新增「endpoint mode 的两个安全输出」段（zombie 报告 + docToken 警告）
 
 ## 0.3.0 — 2026-05-22
 
