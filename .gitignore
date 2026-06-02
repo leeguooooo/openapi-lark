@@ -4,3 +4,7 @@ dist/
 .DS_Store
 .openapi-lark/
 coverage/
+
+# Local tool artifacts
+.cursor/
+.omx/
