@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### docToken 误配防护（endpoint 模式）
+
+sync 解析完父节点后，若 `docToken` 指向的节点下大多数已有子节点既不匹配本 spec 的 tag、也不像 API 文档（抽不出 `METHOD /path`），就 stderr 警告 `docToken` 可能指错到了共享 / 空间根节点。
+
+- 防止本项目的 tag 节点散落进共享根、与其它项目混在一起
+- 防止 zombie 报告把别的项目的正常文档误判为 zombie（将来若加 `--prune` 会很危险）
+- 纯警告不阻断；阈值保守（父节点 ≥5 个子节点且 ≥80% 外来才触发），正常项目即使有历史 zombie 也不会误报
+- 新文件 `src/lark/parent-guard.ts` + `test/parent-guard.test.ts`（8 tests）
+
 ## 0.3.0 — 2026-05-22
 
 ### `init` 现在会自动注入 CLAUDE.md 段（AI 可读引导）

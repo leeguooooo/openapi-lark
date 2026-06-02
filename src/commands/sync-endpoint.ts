@@ -26,6 +26,7 @@ import {
   remainingChildren,
   type ChildPool,
 } from '../lark/child-pool.js';
+import { detectMisconfiguredParent } from '../lark/parent-guard.js';
 import {
   endpointIdentity,
   extractEndpointIdentity,
@@ -282,6 +283,29 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   // Matching cascade per tag: node-map[tagId] → byTitle. Identity-by-title
   // doesn't apply to tag nodes (their title is plain language, not METHOD path).
   const tagPool = buildChildPool(tagChildren);
+
+  // Guard: warn (don't block) if docToken looks like it points at a shared /
+  // space-root node rather than this project's dedicated parent. Skipped for
+  // faked dry-run parents (tagChildren is empty there anyway).
+  const expectedTagTitles = tagIds.map((t) => titleForTag(t, api, svc.tagAliases));
+  const misconfig = detectMisconfiguredParent({
+    children: tagChildren,
+    expectedTagTitles,
+  });
+  if (misconfig) {
+    const samples = misconfig.foreignTitles.map((t) => `"${t}"`).join(', ');
+    process.stderr.write(
+      `\n[sync] ${svc.name}: ⚠ docToken may point at a SHARED / root wiki node, not this project's parent.\n` +
+        `        ${misconfig.foreignCount}/${misconfig.totalCount} existing children under ` +
+        `"${parent.title}" don't match this spec's tags or look like API docs ` +
+        `(${(misconfig.foreignFraction * 100).toFixed(0)}% foreign).\n` +
+        `        e.g. ${samples}\n` +
+        `        If that's wrong, sync will scatter this project's nodes there AND the ` +
+        `zombie report below will falsely flag unrelated docs.\n` +
+        `        → Verify services[].docToken in .openapi-lark.yaml points at a node ` +
+        `dedicated to "${svc.name}". (This is a warning; sync continues.)\n\n`,
+    );
+  }
 
   // Collect zombies for end-of-sync report. Zombies = wiki nodes that were
   // listed under the parent at the start of sync but never claimed by any
