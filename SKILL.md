@@ -149,7 +149,7 @@ services:
 |---|---|---|---|
 | `off`（默认） | 只检测 + 警告，**不动任何节点**（升级老用户行为完全不变） | — | — |
 | `move` | 把每个 zombie 移到 `pruneSpaceId`（**可逆**，推荐） | `wiki +move --node-token <t> --target-space-id <pruneSpaceId> --source-space-id <src>` | `wiki:node:move` |
-| `delete` | **不可逆**删除每个 zombie | `wiki +node-delete --node-token <t> --obj-type <docx> --space-id <src> --yes` | wiki 节点删除 scope |
+| `delete` | **不可逆**删除每个 zombie | `wiki +node-delete --node-token <t> --obj-type wiki --space-id <src> --yes`（`--obj-type` 是 token 种类，删 wiki 节点固定 `wiki`） | wiki 节点删除 scope |
 
 - `prune: move` 缺 `pruneSpaceId` → 打清晰错误并**退回只警告**，绝不瞎删。
 - prune 成功后会从 `node-map.json` + `sync-lock.json` 移除该节点条目，下次不再当 zombie。

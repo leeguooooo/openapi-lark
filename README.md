@@ -448,7 +448,7 @@ services:
 
 - **widdershins heading 越级（H2→H4）只 warn 不自动修** — 自动改 md 会引入飞书空标题；修源头（openapi 描述）更安全
 - **lark docx 不支持折叠块** — JSON 示例放在 `### 响应示例` 子标题下，靠 wiki 大纲折叠
-- **删除 wiki zombie 节点** — `drive +delete` 对 wiki-托管 docx 返 forbidden；用 `lark-cli wiki +move`（或 `wiki +node-delete --obj-type docx --yes`）才是有效"清除"手段。现在可用配置自动化，见下「Auto-prune」
+- **删除 wiki zombie 节点** — `drive +delete` 对 wiki-托管 docx 返 forbidden；用 `lark-cli wiki +move`（或 `wiki +node-delete --node-token <node> --obj-type wiki --yes`，注意 `--obj-type` 是 token 种类，删 wiki 节点须传 `wiki` 而非节点底层 obj_type）才是有效"清除"手段。现在可用配置自动化，见下「Auto-prune」
 - **`--engine native` 占位未实现** — 传入会 exit 2
 
 ## 🤝 vs 其他方案

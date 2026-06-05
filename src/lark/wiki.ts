@@ -252,21 +252,24 @@ export function moveWikiNode(
 }
 
 /**
- * Delete a wiki node (irreversible). Used by `prune: delete`. `--obj-type` is
- * required because the node-token is a raw token; pass the obj_type recorded for
- * the node (usually `docx`). `--yes` confirms the high-risk operation.
+ * Delete a wiki node (irreversible). Used by `prune: delete`. `--yes` confirms the
+ * high-risk operation.
  *
- * Uses `lark-cli wiki +node-delete --node-token X --obj-type T --space-id S --yes`.
+ * `--obj-type` is the *token kind*, not the node's underlying object type. We always
+ * pass a wiki node_token here, so it is hardcoded to `wiki`. Passing the node's
+ * obj_type (docx/sheet/…) makes lark-cli treat the node_token as that object's token
+ * and fail with 131005 (document not found).
+ *
+ * Uses `lark-cli wiki +node-delete --node-token X --obj-type wiki --space-id S --yes`.
  * Requires the wiki node delete scope. Throws WikiError on failure.
  */
 export function deleteWikiNode(
   nodeToken: string,
-  objType: string,
   spaceId: string | undefined,
   larkBin = 'lark-cli',
   env?: NodeJS.ProcessEnv,
 ): void {
-  const args = ['wiki', '+node-delete', '--node-token', nodeToken, '--obj-type', objType, '--yes'];
+  const args = ['wiki', '+node-delete', '--node-token', nodeToken, '--obj-type', 'wiki', '--yes'];
   if (spaceId) args.push('--space-id', spaceId);
   const r = runLark(larkBin, args, env, 60_000);
   if (!r.ok) {

@@ -184,7 +184,7 @@ export function pruneZombies(
       if (mode === 'move') {
         deps.move(z.nodeToken, opts.pruneSpaceId!, z.spaceId, opts.larkBin);
       } else {
-        deps.remove(z.nodeToken, z.objType ?? 'docx', z.spaceId, opts.larkBin);
+        deps.remove(z.nodeToken, z.spaceId, opts.larkBin);
       }
       // Drop the now-gone node from our maps so it isn't re-flagged next sync.
       removeNodeByToken(opts.nodeMap, opts.svcName, z.nodeToken);

@@ -111,21 +111,22 @@ describe('pruneZombies: move', () => {
 });
 
 describe('pruneZombies: delete', () => {
-  it('calls node-delete with obj-type per zombie', () => {
+  it('calls node-delete by node_token per zombie (obj-type wiki is internal)', () => {
     const deps = mockDeps();
     const z = makeZombie({ nodeToken: 'n9', objType: 'docx', spaceId: 'src9' });
     const res = pruneZombies([z], baseOpts({ prune: 'delete' }), deps);
     expect(deps.remove).toHaveBeenCalledTimes(1);
-    expect(deps.remove).toHaveBeenCalledWith('n9', 'docx', 'src9', 'lark-cli');
+    // node_token + spaceId + larkBin; obj-type is hardcoded to `wiki` inside deleteWikiNode.
+    expect(deps.remove).toHaveBeenCalledWith('n9', 'src9', 'lark-cli');
     expect(deps.move).not.toHaveBeenCalled();
     expect(res).toEqual({ pruned: 1, failed: 0 });
   });
 
-  it('defaults obj-type to docx when missing', () => {
+  it('ignores node objType for delete (always deletes by wiki node_token)', () => {
     const deps = mockDeps();
-    const z = makeZombie({ objType: undefined });
+    const z = makeZombie({ nodeToken: 'n10', objType: undefined, spaceId: 'src10' });
     pruneZombies([z], baseOpts({ prune: 'delete' }), deps);
-    expect(deps.remove).toHaveBeenCalledWith(expect.any(String), 'docx', expect.any(String), 'lark-cli');
+    expect(deps.remove).toHaveBeenCalledWith('n10', 'src10', 'lark-cli');
   });
 });
 
