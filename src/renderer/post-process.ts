@@ -210,6 +210,116 @@ export function stripWiddershinsBoilerplate(md: string): string {
 }
 
 /**
+ * Split a markdown table row into its cell contents. Returns null when the line
+ * is not a `| ... |` table row. Leading/trailing pipes are stripped so the
+ * returned array contains only real cells (no empty edge entries). Cells are
+ * NOT trimmed here — callers decide.
+ *
+ * Note: this is a best-effort split on unescaped `|`. Rows that embed `\|` in
+ * cell content keep the escaped pipe inside the cell (we only split on `|` that
+ * is not preceded by a backslash).
+ */
+function splitTableCells(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
+  // Strip exactly one leading and one trailing pipe, then split on unescaped `|`.
+  const inner = trimmed.slice(1, -1);
+  const cells: string[] = [];
+  let cur = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '|' && (i === 0 || inner[i - 1] !== '\\')) {
+      cells.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur);
+  return cells;
+}
+
+/**
+ * widdershins noise #A: the "root body wrapper" row in POST parameter tables.
+ *
+ * For a request body, widdershins emits one row representing the whole JSON body
+ * object BEFORE the real `» field` rows:
+ *
+ *   | body | body | object | true | none |   <- meaningless wrapper, remove
+ *   | » mobile | body | string | true | ... | <- real field, keep
+ *
+ * We delete a body row IFF its FIRST cell trims to exactly `body` (no `»`
+ * prefix), its SECOND cell (location/「位置」) trims to `body`, and its THIRD
+ * cell (type/「类型」) trims to `object`. This is keyed on cell *semantics*, not
+ * column count, so tables with an extra 「约束」/Restrictions column still match.
+ *
+ * `» body` / `»» body` field rows are preserved (their first cell is not exactly
+ * `body`). Body schemas that are arrays (type `array`, not `object`) are left
+ * alone — only the object wrapper is removed.
+ */
+export function stripRootBodyParamRow(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  for (const line of lines) {
+    const cells = splitTableCells(line);
+    if (cells && cells.length >= 3) {
+      const c0 = cells[0].trim();
+      const c1 = cells[1].trim();
+      const c2 = cells[2].trim();
+      if (c0 === 'body' && c1 === 'body' && c2 === 'object') {
+        // Drop this row entirely.
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
+ * widdershins noise #B: literal `none` placeholders in table cells.
+ *
+ * widdershins fills empty 描述/约束/必填 cells with the literal string `none`.
+ * Replace any table cell whose trimmed content is exactly `none` with an empty
+ * cell. We operate cell-by-cell on `| ... |` rows only, so prose / code / words
+ * like `none-of-this` are never touched. The separator row (`|-|-|`) has no
+ * `none` cells so it is unaffected; we also skip rows that look like separators
+ * defensively.
+ */
+export function clearNonePlaceholders(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  for (const line of lines) {
+    const cells = splitTableCells(line);
+    if (!cells) {
+      out.push(line);
+      continue;
+    }
+    // Skip separator rows (cells are all dashes/colons) — nothing to clear.
+    const isSeparator = cells.every((c) => /^\s*:?-+:?\s*$/.test(c));
+    if (isSeparator) {
+      out.push(line);
+      continue;
+    }
+    let changed = false;
+    const newCells = cells.map((c) => {
+      if (c.trim() === 'none') {
+        changed = true;
+        // Preserve a single space padding so the cell reads `| |` not `||`.
+        return ' ';
+      }
+      return c;
+    });
+    if (!changed) {
+      out.push(line);
+      continue;
+    }
+    out.push('|' + newCells.join('|') + '|');
+  }
+  return out.join('\n');
+}
+
+/**
  * For endpoint-mode leaf docs: the docx title (locked via lockTitleInMarkdown)
  * already carries the summary. Widdershins also emits the summary as a `*X*`
  * emphasis line right under the `## <operationId>` heading — redundant.
@@ -332,6 +442,11 @@ export function postProcess(md: string, api?: any, singleOperationSummary?: stri
   let out = md;
   out = stripUnsafeHtmlTags(out);
   out = stripWiddershinsBoilerplate(out);
+  // Table noise from widdershins: drop the root body wrapper row, blank out
+  // literal `none` cells. Run before pipe-escaping so cell splitting sees the
+  // raw rows.
+  out = stripRootBodyParamRow(out);
+  out = clearNonePlaceholders(out);
   out = localizeHeadings(out);
   if (api) out = replaceOperationIdHeadings(out, api);
   if (singleOperationSummary) {

@@ -4,6 +4,8 @@ import {
   stripUnsafeHtmlTags,
   postProcess,
   stripWiddershinsBoilerplate,
+  stripRootBodyParamRow,
+  clearNonePlaceholders,
   localizeHeadings,
   replaceOperationIdHeadings,
 } from '../src/renderer/post-process.js';
@@ -239,6 +241,114 @@ after`;
     expect(out).not.toContain('200 Response');
     expect(out).not.toContain('400 Response');
     expect(out).toContain('after');
+  });
+});
+
+describe('stripRootBodyParamRow', () => {
+  it('removes the root body wrapper row but keeps » field rows', () => {
+    const md = `| 名称 | 位置 | 类型 | 必填 | 描述 |
+|-|-|-|-|-|
+| body | body | object | true | none |
+| » mobile | body | string | true | 手机号 |
+| » code | body | string | true | 验证码 |`;
+    const out = stripRootBodyParamRow(md);
+    expect(out).not.toMatch(/^\| body \| body \| object/m);
+    expect(out).toContain('| » mobile | body | string | true | 手机号 |');
+    expect(out).toContain('| » code | body | string | true | 验证码 |');
+    // header + separator survive
+    expect(out).toContain('| 名称 | 位置 | 类型 | 必填 | 描述 |');
+    expect(out).toContain('|-|-|-|-|-|');
+  });
+
+  it('matches by cell semantics, not column count (extra 约束 column)', () => {
+    const md = `| 名称 | 位置 | 类型 | 必填 | 约束 | 描述 |
+|-|-|-|-|-|-|
+| body | body | object | true | none | none |
+| » mobile | body | string | true | none | 手机号 |`;
+    const out = stripRootBodyParamRow(md);
+    expect(out).not.toMatch(/^\| body \| body \| object/m);
+    expect(out).toContain('| » mobile | body | string | true | none | 手机号 |');
+  });
+
+  it('does not remove » body field rows (only the bare root wrapper)', () => {
+    const md = `| » body | body | object | false | nested |
+| »» inner | body | string | true | x |`;
+    const out = stripRootBodyParamRow(md);
+    expect(out).toContain('| » body | body | object | false | nested |');
+    expect(out).toContain('| »» inner | body | string | true | x |');
+  });
+
+  it('leaves array body wrapper rows alone (type array, not object)', () => {
+    const md = `| body | body | array | true | none |`;
+    const out = stripRootBodyParamRow(md);
+    expect(out).toContain('| body | body | array | true | none |');
+  });
+
+  it('does not touch a query param literally named body', () => {
+    // first cell `body`, but location is `query` not `body` → keep
+    const md = `| body | query | string | false | raw body |`;
+    const out = stripRootBodyParamRow(md);
+    expect(out).toContain('| body | query | string | false | raw body |');
+  });
+});
+
+describe('clearNonePlaceholders', () => {
+  it('clears table cells that are exactly none', () => {
+    const md = `| 名称 | 描述 |
+|-|-|
+| mobile | none |
+| code | 验证码 |`;
+    const out = clearNonePlaceholders(md);
+    expect(out).toContain('| mobile | |');
+    expect(out).toContain('| code | 验证码 |');
+  });
+
+  it('does not touch prose containing none', () => {
+    const md = `This endpoint requires none-of-this and returns none in the body.`;
+    const out = clearNonePlaceholders(md);
+    expect(out).toBe(md);
+  });
+
+  it('does not touch words like none-of-this inside a table cell', () => {
+    const md = `| a | none-of-this |\n| b | not none really |`;
+    const out = clearNonePlaceholders(md);
+    expect(out).toContain('| a | none-of-this |');
+    expect(out).toContain('| b | not none really |');
+  });
+
+  it('clears multiple none cells in one row', () => {
+    const md = `| x | none | none | done |`;
+    const out = clearNonePlaceholders(md);
+    expect(out).toBe('| x | | | done |');
+  });
+
+  it('leaves separator rows untouched', () => {
+    const md = `| a | b |\n|-|-|\n| 1 | none |`;
+    const out = clearNonePlaceholders(md);
+    expect(out).toContain('|-|-|');
+    expect(out).toContain('| 1 | |');
+  });
+});
+
+describe('postProcess table noise integration', () => {
+  it('drops root body row and clears none across the full pipeline', () => {
+    const md = `### Parameters
+
+| Name | In | Type | Required | Description |
+|-|-|-|-|-|
+| body | body | object | true | none |
+| » mobile | body | string | true | 手机号 |
+| » code | body | string | true | none |`;
+    const out = postProcess(md);
+    // root wrapper gone
+    expect(out).not.toMatch(/^\| body \| body \| object/m);
+    // header localized + separator kept
+    expect(out).toContain('| 名称 | 位置 | 类型 | 必填 | 描述 |');
+    expect(out).toContain('|-|-|-|-|-|');
+    // field rows kept, none cell blanked
+    expect(out).toContain('| » mobile | body | string | true | 手机号 |');
+    expect(out).toContain('| » code | body | string | true | |');
+    expect(out).not.toMatch(/\| none \|/);
   });
 });
 
