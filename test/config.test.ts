@@ -286,6 +286,87 @@ services:
     expect(loaded.config.services[1].docToken).toBeUndefined();
   });
 
+  it('defaults service.prune to "off" and leaves pruneSpaceId undefined', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+services:
+  - name: a
+    openapi: api/a.yaml
+    docToken: doccnABCDEFGH
+`,
+    );
+    const loaded = loadConfig({ configPath: path, env: {} });
+    expect(loaded.config.services[0].prune).toBe('off');
+    expect(loaded.config.services[0].pruneSpaceId).toBeUndefined();
+  });
+
+  it('parses bare `prune: off` (YAML boolean) back to the "off" string', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+services:
+  - name: a
+    openapi: api/a.yaml
+    docToken: doccnABCDEFGH
+    prune: off
+`,
+    );
+    const loaded = loadConfig({ configPath: path, env: {} });
+    expect(loaded.config.services[0].prune).toBe('off');
+  });
+
+  it('accepts prune: move with pruneSpaceId', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+services:
+  - name: a
+    openapi: api/a.yaml
+    docToken: doccnABCDEFGH
+    prune: move
+    pruneSpaceId: "7300000000000000000"
+`,
+    );
+    const loaded = loadConfig({ configPath: path, env: {} });
+    expect(loaded.config.services[0].prune).toBe('move');
+    expect(loaded.config.services[0].pruneSpaceId).toBe('7300000000000000000');
+  });
+
+  it('accepts prune: delete', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+services:
+  - name: a
+    openapi: api/a.yaml
+    docToken: doccnABCDEFGH
+    prune: delete
+`,
+    );
+    const loaded = loadConfig({ configPath: path, env: {} });
+    expect(loaded.config.services[0].prune).toBe('delete');
+  });
+
+  it('rejects an unknown prune value', () => {
+    const path = writeFile(
+      '.openapi-lark.yaml',
+      `engines:
+  larkCli: ">=0.1.0"
+services:
+  - name: a
+    openapi: api/a.yaml
+    docToken: doccnABCDEFGH
+    prune: yolo
+`,
+    );
+    expect(() => loadConfig({ configPath: path, env: {} })).toThrow();
+  });
+
   it('rejects duplicate service names', () => {
     const path = writeFile(
       '.openapi-lark.yaml',

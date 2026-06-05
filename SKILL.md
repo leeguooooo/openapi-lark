@@ -127,10 +127,37 @@ services:
 ## endpoint mode 的两个安全输出（看 stderr）
 
 1. **zombie 报告**：sync 结束后列出父节点下「本次没被任何接口认领」的旧节点
-   （标题 + nodeToken + URL）。这些是 spec 里已删的接口 / 早期残留。**openapi-lark
-   不自动删**，人工 review 后用 `lark-cli wiki +move` 移走。
+   （标题 + nodeToken + URL）。这些是 spec 里已删的接口 / 早期残留。**默认只警告、
+   不动节点**；人工 review 后用 `lark-cli wiki +move` 移走，**或开启下面的 auto-prune**。
    - 身份匹配用 `METHOD + path`（不是标题）：改 `summary` / `tagAlias` 不会再制造
      新 zombie，旧节点原地更新 + 改名（靠 `.openapi-lark/node-map.json` 持久化映射）。
+   - **auto-prune（已实现，opt-in）**：在 service 上配 `prune`（见下）后，sync 会
+     自动清理 zombie 列表里的节点——**只动该列表里的节点**，绝不碰检测逻辑之外的任何节点。
+
+### auto-prune 配置（`prune` / `pruneSpaceId`）
+
+```yaml
+services:
+  - name: my-api
+    mode: endpoint
+    docToken: WIKI_NODE_TOKEN
+    prune: off          # off（默认，只警告）| move | delete
+    pruneSpaceId: "73…" # prune: move 时必填——zombie 移到的目标 wiki space（当回收站）
+```
+
+| 值 | 行为 | 用的 lark-cli 命令 | 需要 scope |
+|---|---|---|---|
+| `off`（默认） | 只检测 + 警告，**不动任何节点**（升级老用户行为完全不变） | — | — |
+| `move` | 把每个 zombie 移到 `pruneSpaceId`（**可逆**，推荐） | `wiki +move --node-token <t> --target-space-id <pruneSpaceId> --source-space-id <src>` | `wiki:node:move` |
+| `delete` | **不可逆**删除每个 zombie | `wiki +node-delete --node-token <t> --obj-type <docx> --space-id <src> --yes` | wiki 节点删除 scope |
+
+- `prune: move` 缺 `pruneSpaceId` → 打清晰错误并**退回只警告**，绝不瞎删。
+- prune 成功后会从 `node-map.json` + `sync-lock.json` 移除该节点条目，下次不再当 zombie。
+- 单节点失败（权限 / 网络 / 已不存在）→ 记日志跳过，**不中断整个 sync**。
+- `--dry-run` 下只打印 `(would) prune …`，**不真删 / 移**。
+- ⚠ **误删不可逆**：飞书 wiki 托管的 docx 删了恢复不了。**强烈建议先用 `move` 到一个
+  专门的回收 space**，确认无误再考虑 `delete`。`drive +delete` 对 wiki docx 返 forbidden，
+  所以清理只能走 `wiki +move` / `wiki +node-delete`。
 2. **docToken 误配警告**：若父节点下 ≥5 个子节点且 ≥80% 既不匹配本 spec 的 tag、
    也不像 API 文档 → 警告 docToken 可能指错到共享 / 空间根节点。纯警告不阻断。
    正常项目即使有历史 zombie（外来占比低）也不会误报。
@@ -318,8 +345,9 @@ lark-cli wiki +node-list --space-id <X> --parent-node-token <project parent> --p
 | 创建 / 更新 docx | `docx:document` | — |
 | 读 wiki 节点信息 | `wiki:node:read` | `wiki:wiki:readonly` |
 | 创建 wiki 子节点 | `wiki:node:create` | `wiki:wiki` |
-| **移动 wiki 节点（清理 zombie）** | `wiki:node:move` | `wiki:wiki` |
-| **删除 docx**（少见） | `space:document:delete`（但 wiki 托管的 docx 仍 forbidden，需用 move） | — |
+| **移动 wiki 节点（prune: move 清理 zombie）** | `wiki:node:move` | `wiki:wiki` |
+| **删除 wiki 节点（prune: delete 清理 zombie）** | wiki 节点删除 scope（`wiki:node` 写权限） | `wiki:wiki` |
+| **删除 docx**（少见） | `space:document:delete`（但 wiki 托管的 docx 仍 forbidden，需用 move/node-delete） | — |
 
 > 💡 `openapi-lark doctor` 现在会用 `lark-cli auth check --scope "..."` 预检关键 scope（需要 lark-cli ≥ 1.0.34），缺了会直接告诉你补哪条。
 

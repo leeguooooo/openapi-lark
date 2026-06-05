@@ -228,6 +228,53 @@ export function createWikiChild(
 }
 
 /**
+ * Move a wiki node to another wiki space (the "recycle bin" space). This is the
+ * SAFE prune path for wiki-hosted docx: `drive +delete` returns forbidden on
+ * them, but `wiki +move` relocates the node out of the project tree.
+ *
+ * Uses `lark-cli wiki +move --node-token X --target-space-id Y [--source-space-id Z]`.
+ * Requires the `wiki:node:move` scope. Throws WikiError on failure so the caller
+ * can record a per-node failure without aborting the whole sync.
+ */
+export function moveWikiNode(
+  nodeToken: string,
+  targetSpaceId: string,
+  sourceSpaceId: string | undefined,
+  larkBin = 'lark-cli',
+  env?: NodeJS.ProcessEnv,
+): void {
+  const args = ['wiki', '+move', '--node-token', nodeToken, '--target-space-id', targetSpaceId];
+  if (sourceSpaceId) args.push('--source-space-id', sourceSpaceId);
+  const r = runLark(larkBin, args, env, 60_000);
+  if (!r.ok) {
+    throw new WikiError(`wiki +move ${nodeToken} → ${targetSpaceId} failed: ${(r.stderr || r.stdout).slice(0, 300)}`);
+  }
+}
+
+/**
+ * Delete a wiki node (irreversible). Used by `prune: delete`. `--obj-type` is
+ * required because the node-token is a raw token; pass the obj_type recorded for
+ * the node (usually `docx`). `--yes` confirms the high-risk operation.
+ *
+ * Uses `lark-cli wiki +node-delete --node-token X --obj-type T --space-id S --yes`.
+ * Requires the wiki node delete scope. Throws WikiError on failure.
+ */
+export function deleteWikiNode(
+  nodeToken: string,
+  objType: string,
+  spaceId: string | undefined,
+  larkBin = 'lark-cli',
+  env?: NodeJS.ProcessEnv,
+): void {
+  const args = ['wiki', '+node-delete', '--node-token', nodeToken, '--obj-type', objType, '--yes'];
+  if (spaceId) args.push('--space-id', spaceId);
+  const r = runLark(larkBin, args, env, 60_000);
+  if (!r.ok) {
+    throw new WikiError(`wiki +node-delete ${nodeToken} failed: ${(r.stderr || r.stdout).slice(0, 300)}`);
+  }
+}
+
+/**
  * Find an existing child by title (case-insensitive) or create it.
  */
 export function findOrCreateChild(

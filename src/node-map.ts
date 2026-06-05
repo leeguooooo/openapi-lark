@@ -168,6 +168,31 @@ export function setGroupNode(
   ensureService(data, svc).groups[groupIdentity(tagId, groupKey)] = nodeToken;
 }
 
+/**
+ * Remove every node-map entry (across tags/groups/leaves) for a service that
+ * points at `nodeToken`. Called after a zombie node is successfully pruned
+ * (moved/deleted) so the next sync doesn't re-detect the now-gone node as a
+ * zombie. Returns the number of entries removed (0 if none matched).
+ */
+export function removeNodeByToken(
+  data: NodeMapData,
+  svc: string,
+  nodeToken: string,
+): number {
+  const s = data.services[svc];
+  if (!s) return 0;
+  let removed = 0;
+  for (const bucket of [s.tags, s.groups, s.leaves]) {
+    for (const key of Object.keys(bucket)) {
+      if (bucket[key] === nodeToken) {
+        delete bucket[key];
+        removed++;
+      }
+    }
+  }
+  return removed;
+}
+
 export function getLeafNode(
   data: NodeMapData,
   svc: string,

@@ -39,6 +39,32 @@ export const ServiceSchema = z.object({
   includeTags: z.array(z.string()).optional(),
   excludeTags: z.array(z.string()).optional(),
   parentTitle: z.string().min(1).optional(),
+  /**
+   * Auto-prune of zombie wiki nodes (endpoint mode only). Opt-in; default 'off'
+   * keeps the historical behaviour (detect + warn, never touch nodes).
+   *   - 'off'    — only warn (default).
+   *   - 'move'   — relocate each zombie to `pruneSpaceId` via `wiki +move`
+   *                (reversible). Requires the `wiki:node:move` scope.
+   *   - 'delete' — irreversibly delete each zombie via `wiki +node-delete --yes`.
+   *                Requires the wiki node delete scope. Use with care.
+   * Only nodes already flagged by zombie detection are ever touched.
+   */
+  prune: z
+    .preprocess(
+      // YAML parses bare `off`/`no`/`false` as boolean false (and `on`/`yes`/
+      // `true` as true). Normalize those back to our string enum so users can
+      // write the natural `prune: off`.
+      (v) => {
+        if (v === false || v === undefined || v === null) return 'off';
+        if (v === true) return 'on'; // invalid on purpose → clear enum error
+        return v;
+      },
+      z.enum(['off', 'move', 'delete']),
+    )
+    .default('off'),
+  /** Target wiki space ID for `prune: move` — zombies are relocated here (a
+   *  "recycle bin" space). Required when prune is 'move'; ignored otherwise. */
+  pruneSpaceId: z.string().min(1).optional(),
   render: RenderSchema.optional(),
 });
 

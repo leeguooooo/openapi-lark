@@ -138,3 +138,14 @@ export function upsert(
   if (!lock.services[serviceName]) lock.services[serviceName] = {};
   lock.services[serviceName][docToken] = entry;
 }
+
+/** Remove a doc's hash-cache entry (by docToken / objToken). Used after a
+ *  zombie node is pruned so its stale hash doesn't linger in the lockfile. */
+export function remove(
+  lock: SyncLockData,
+  serviceName: string,
+  docToken: string,
+): void {
+  const svc = lock.services[serviceName];
+  if (svc) delete svc[docToken];
+}

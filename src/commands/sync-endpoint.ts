@@ -17,6 +17,8 @@ import {
   resolveWikiNode,
   listWikiChildren,
   createWikiChild,
+  moveWikiNode,
+  deleteWikiNode,
   WikiError,
   type WikiChild,
 } from '../lark/wiki.js';
@@ -33,6 +35,7 @@ import {
   getGroupNode,
   getLeafNode,
   getTagNode,
+  removeNodeByToken,
   setGroupNode,
   setLeafNode,
   setTagNode,
@@ -50,6 +53,7 @@ import {
   saveLock,
   lookup as lockLookup,
   upsert as lockUpsert,
+  remove as lockRemove,
   hashMarkdown,
   type SyncLockData,
 } from '../sync-lock.js';
@@ -83,6 +87,125 @@ export interface EndpointSyncContext {
    *  to stderr. Helps users figure out if a re-push is real change or
    *  generator noise (e.g. ogen field-order drift). */
   showDiff?: boolean;
+}
+
+/** A wiki node flagged by zombie detection: it lives under this project's
+ *  parent, was created by a prior sync, but the current spec has no matching
+ *  tag/group/endpoint for it. The only nodes auto-prune is ever allowed to
+ *  touch. */
+export interface ZombieNode {
+  kind: 'tag' | 'group' | 'leaf';
+  title: string;
+  nodeToken: string;
+  objToken: string;
+  /** Drive object type (usually 'docx'); needed for `wiki +node-delete --obj-type`. */
+  objType?: string;
+  spaceId: string;
+  parentTitle: string;
+  endpointIdentity: string | null;
+}
+
+/**
+ * Auto-prune the detected zombie nodes per the service's `prune` setting.
+ * STRICTLY confined to the `zombies` list handed in — never lists or touches
+ * any other node. Safety rules:
+ *   - prune 'off' / unset → no-op (historical behaviour, only the warning runs).
+ *   - prune 'move' without pruneSpaceId → clear error, fall back to warn-only
+ *     (does NOT move/delete anything).
+ *   - dry-run → print "(would) prune ..." only; no remote writes.
+ *   - per-node failure (permission / network / already-gone) is logged and
+ *     skipped; it never aborts the sync.
+ * On success, the node's node-map + lockfile entries are removed so the next
+ * sync doesn't re-flag it.
+ *
+ * Returns a result the caller folds into ServiceResults. Exposed (exported)
+ * for unit testing with a mocked lark layer via the `deps` override.
+ */
+export interface PruneDeps {
+  move: typeof moveWikiNode;
+  remove: typeof deleteWikiNode;
+}
+
+export function pruneZombies(
+  zombies: ZombieNode[],
+  opts: {
+    svcName: string;
+    prune: 'off' | 'move' | 'delete' | undefined;
+    pruneSpaceId?: string;
+    larkBin: string;
+    dryRun: boolean;
+    nodeMap: NodeMapData;
+    lock: SyncLockData;
+  },
+  deps: PruneDeps = { move: moveWikiNode, remove: deleteWikiNode },
+): { pruned: number; failed: number } {
+  const mode = opts.prune ?? 'off';
+  if (mode === 'off' || zombies.length === 0) return { pruned: 0, failed: 0 };
+
+  // Never act on dry-run-faked nodes (no real tokens to move/delete).
+  const targets = zombies.filter((z) => !z.nodeToken.startsWith('dryrun-'));
+  if (targets.length === 0) {
+    if (opts.dryRun) {
+      process.stderr.write(
+        `[prune] ${opts.svcName}: dry-run produced no real zombie nodes to prune.\n`,
+      );
+    }
+    return { pruned: 0, failed: 0 };
+  }
+
+  if (mode === 'move' && !opts.pruneSpaceId) {
+    process.stderr.write(
+      `[prune] ${opts.svcName}: ⚠ prune: move requires \`pruneSpaceId\` (target wiki space) ` +
+        `but it is missing — NOT moving anything. Set services[].pruneSpaceId to a recycle ` +
+        `space, or use prune: delete. Falling back to warn-only.\n`,
+    );
+    return { pruned: 0, failed: 0 };
+  }
+
+  process.stderr.write(
+    `[prune] ${opts.svcName}: ${opts.dryRun ? '(dry-run) ' : ''}auto-prune ${mode} ` +
+      `on ${targets.length} zombie node(s)` +
+      (mode === 'move' ? ` → space ${opts.pruneSpaceId}` : '') +
+      `\n`,
+  );
+
+  let pruned = 0;
+  let failed = 0;
+  for (const z of targets) {
+    const where =
+      mode === 'move' ? `→ space ${opts.pruneSpaceId}` : `(obj-type ${z.objType ?? 'docx'})`;
+    if (opts.dryRun) {
+      process.stderr.write(
+        `[prune] ${opts.svcName}: (would) ${mode} "${z.title}" nodeToken=${z.nodeToken} ${where}\n`,
+      );
+      continue;
+    }
+    try {
+      if (mode === 'move') {
+        deps.move(z.nodeToken, opts.pruneSpaceId!, z.spaceId, opts.larkBin);
+      } else {
+        deps.remove(z.nodeToken, z.objType ?? 'docx', z.spaceId, opts.larkBin);
+      }
+      // Drop the now-gone node from our maps so it isn't re-flagged next sync.
+      removeNodeByToken(opts.nodeMap, opts.svcName, z.nodeToken);
+      lockRemove(opts.lock, opts.svcName, z.objToken);
+      pruned++;
+      process.stderr.write(
+        `[prune] ${opts.svcName}: ${mode === 'move' ? 'moved' : 'deleted'} "${z.title}" ` +
+          `nodeToken=${z.nodeToken} ${where}\n`,
+      );
+    } catch (err) {
+      failed++;
+      process.stderr.write(
+        `[prune] ${opts.svcName}: ✗ failed to ${mode} "${z.title}" nodeToken=${z.nodeToken}: ` +
+          `${(err as Error).message.split('\n')[0]} (skipped, sync continues)\n`,
+      );
+    }
+  }
+  process.stderr.write(
+    `[prune] ${opts.svcName}: ${opts.dryRun ? '(dry-run) ' : ''}pruned ${pruned} / failed ${failed}\n`,
+  );
+  return { pruned, failed };
 }
 
 /**
@@ -312,15 +435,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   // tag/group/leaf during this run. They're documents for endpoints / tags /
   // groups that no longer exist in the spec (or whose identity drifted in a
   // way our cascade couldn't recover).
-  const zombieReport: Array<{
-    kind: 'tag' | 'group' | 'leaf';
-    title: string;
-    nodeToken: string;
-    objToken: string;
-    spaceId: string;
-    parentTitle: string;
-    endpointIdentity: string | null;
-  }> = [];
+  const zombieReport: ZombieNode[] = [];
 
   // Sequential per-tag (parallel per-endpoint inside)
   for (const tagId of tagIds) {
@@ -541,6 +656,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
           title: c.title,
           nodeToken: c.nodeToken,
           objToken: c.objToken,
+          objType: c.objType,
           spaceId: parent.spaceId,
           parentTitle: groupTitle,
           endpointIdentity: extractEndpointIdentity(c.title),
@@ -554,6 +670,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         title: c.title,
         nodeToken: c.nodeToken,
         objToken: c.objToken,
+        objType: c.objType,
         spaceId: parent.spaceId,
         parentTitle: tagTitle,
         endpointIdentity: extractEndpointIdentity(c.title),
@@ -574,6 +691,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       title: c.title,
       nodeToken: c.nodeToken,
       objToken: c.objToken,
+      objType: c.objType,
       spaceId: parent.spaceId,
       parentTitle: parent.title,
       endpointIdentity: extractEndpointIdentity(c.title),
@@ -596,10 +714,36 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
           `      ${url}\n`,
       );
     }
-    process.stderr.write(
-      `  ⓘ openapi-lark does not delete wiki nodes — review the list and remove ` +
-        `manually if they're truly obsolete. (Auto-prune is a separate feature.)\n\n`,
-    );
+    const pruneMode = svc.prune ?? 'off';
+    if (pruneMode === 'off') {
+      process.stderr.write(
+        `  ⓘ prune is off — openapi-lark won't touch these. Review and remove manually, ` +
+          `or set services[].prune to 'move' (recommended) / 'delete' to auto-prune. ` +
+          `See README §Auto-prune.\n\n`,
+      );
+    } else {
+      process.stderr.write(`\n`);
+    }
+  }
+
+  // Opt-in auto-prune. No-op unless services[].prune is 'move'/'delete'.
+  // Strictly limited to the zombieReport list above; honors dry-run.
+  const pruneResult = pruneZombies(zombieReport, {
+    svcName: svc.name,
+    prune: svc.prune,
+    pruneSpaceId: svc.pruneSpaceId,
+    larkBin,
+    dryRun: !!ctx.dryRun,
+    nodeMap: ctx.nodeMap,
+    lock: ctx.lock,
+  });
+  if (pruneResult.pruned > 0 || pruneResult.failed > 0) {
+    results.push({
+      service: `${svc.name} :: prune`,
+      status: pruneResult.failed > 0 ? 'warning' : 'ok',
+      durationMs: 0,
+      reason: `prune ${svc.prune}: ${pruneResult.pruned} pruned / ${pruneResult.failed} failed`,
+    });
   }
 
   return results;

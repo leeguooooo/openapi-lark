@@ -29,6 +29,13 @@ export interface ServiceConfig {
    *  parent title was previously clobbered (e.g. by an earlier widdershins
    *  push to "Authentication") and you want to repair it. */
   parentTitle?: string;
+  /** Auto-prune mode for zombie wiki nodes (endpoint mode only). Opt-in.
+   *  'off' (default): detect + warn only. 'move': relocate zombies to
+   *  `pruneSpaceId`. 'delete': irreversibly delete zombies. Only ever touches
+   *  nodes already flagged by zombie detection. */
+  prune?: 'off' | 'move' | 'delete';
+  /** Target wiki space ID for `prune: move`. Required when prune is 'move'. */
+  pruneSpaceId?: string;
   render?: {
     engine: 'widdershins' | 'native';
   };
