@@ -160,6 +160,67 @@ body`;
     expect(out).toContain('body');
   });
 
+  it('removes widdershins auto method__path operation heading (no operationId)', () => {
+    const md = `## OTP（applegame）
+
+## post__otp_applegame
+
+\`POST /otp/applegame\`
+
+body`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('post__otp_applegame');
+    // tag heading and method/path code span survive
+    expect(out).toContain('## OTP（applegame）');
+    expect(out).toContain('`POST /otp/applegame`');
+    expect(out).toContain('body');
+  });
+
+  it('strips method__path heading at various levels and verbs, case-insensitive', () => {
+    const md = `# Title
+## get__rooms_list
+### DELETE__rooms_{id}
+#### Patch__a_b_c
+keep`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toMatch(/get__rooms_list/);
+    expect(out).not.toMatch(/DELETE__rooms/);
+    expect(out).not.toMatch(/Patch__a_b_c/);
+    expect(out).toContain('# Title');
+    expect(out).toContain('keep');
+  });
+
+  it('does not strip normal headings or non-verb double-underscore', () => {
+    const md = `## 登录接口
+## Schemas
+## my__custom_section
+text`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).toContain('## 登录接口');
+    expect(out).toContain('## Schemas');
+    // `my` is not an HTTP verb → must be preserved
+    expect(out).toContain('## my__custom_section');
+  });
+
+  it('full pipeline: H1 title + tag heading preserved, op-id heading gone', () => {
+    const md = `# applegame.ai 登录 OTP 发送（独立端点） — POST /otp/applegame
+
+## OTP（applegame）
+
+## post__otp_applegame
+
+\`POST /otp/applegame\`
+
+### Parameters`;
+    const out = postProcess(md);
+    expect(out).not.toContain('post__otp_applegame');
+    expect(out).toContain('# applegame.ai 登录 OTP 发送（独立端点） — POST /otp/applegame');
+    expect(out).toContain('## OTP（applegame）');
+    expect(out).toContain('### 参数');
+    // no triple blank line left behind
+    expect(out).not.toMatch(/\n{3,}/);
+  });
+
   it('removes multiple status response dumps', () => {
     const md = `> 200 Response
 

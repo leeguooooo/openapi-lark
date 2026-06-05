@@ -183,6 +183,19 @@ export function stripWiddershinsBoilerplate(md: string): string {
   // widdershins <aside> blocks: "This operation does not require authentication"
   // and similar are useless when we render per-endpoint
   out = out.replace(/<aside[^>]*>[\s\S]*?<\/aside>/g, '');
+  // Auto-generated operation heading "## post__otp_applegame": when an operation
+  // has NO operationId, widdershins synthesizes a heading from method + path
+  // (path `/` → `_`), e.g. `## post__otp_applegame`. It's ugly and redundant —
+  // endpoint-mode leaf docs already carry a proper H1 (`<summary> — <METHOD> <path>`)
+  // locked as the docx title. Strip the whole line. Match `<hashes> <method>__<rest>`
+  // where method is a real HTTP verb and is followed by exactly two underscores.
+  // Case-insensitive so `POST__` / `Get__` are also caught. We do NOT touch tag
+  // headings, Chinese/English section headings, or code (the `<verb>__` shape is
+  // specific to widdershins' synthesized op ids).
+  out = out.replace(
+    /^#{1,6}[ \t]+(?:get|post|put|delete|patch|head|options|trace)__\S+[ \t]*$\n?/gim,
+    '',
+  );
   // "> NNN Response" callout + the JSON code block that follows. Widdershins
   // tries to synthesize an "example response" but for schemas using allOf /
   // discriminator / refs, it dumps the SCHEMA DEFINITION (keys like type/
