@@ -1,5 +1,17 @@
 import type { ServiceResult } from './types.js';
 
+/**
+ * Format a per-item progress prefix like `[42/175] 24%`.
+ *
+ * - `i` is 1-based (the item just completed).
+ * - Percentage is rounded to the nearest integer.
+ * - Guards a zero/negative total → `[i/0] 0%` (never divides by zero).
+ */
+export function formatProgress(i: number, n: number): string {
+  const pct = n > 0 ? Math.round((i / n) * 100) : 0;
+  return `[${i}/${n}] ${pct}%`;
+}
+
 const STATUS_SYMBOL: Record<ServiceResult['status'], string> = {
   ok: '✓',
   failed: '✗',

@@ -156,15 +156,13 @@ export async function runSync(args: SyncArgs): Promise<number> {
               durationMs: Date.now() - started,
               reason: `endpoint: ${oks} ok / ${failed} failed / ${warns} warning / ${skipped} skipped across ${epResults.length} parts`,
             };
+            // v0.8: per-endpoint progress (incl. ok/skipped) now streams LIVE
+            // from runEndpointSync as `[i/N] p%` lines. Here we only re-surface
+            // failures / warnings so they're easy to spot near the summary
+            // table (avoids double-printing every successful push).
             for (const r of epResults) {
-              const sym =
-                r.status === 'ok'
-                  ? '✓'
-                  : r.status === 'failed'
-                    ? '✗'
-                    : r.status === 'warning'
-                      ? '⚠'
-                      : '·';
+              if (r.status !== 'failed' && r.status !== 'warning') continue;
+              const sym = r.status === 'failed' ? '✗' : '⚠';
               process.stdout.write(
                 `[sync]   ${sym} ${r.service} ${r.docUrl ?? r.reason ?? ''} (${(r.durationMs / 1000).toFixed(1)}s)\n`,
               );

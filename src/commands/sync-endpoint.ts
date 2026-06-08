@@ -49,6 +49,7 @@ import {
   type ServiceResult,
 } from '../types.js';
 import { lockTitleInMarkdown } from './sync-tree.js';
+import { formatProgress } from '../report.js';
 import {
   loadLock,
   saveLock,
@@ -261,6 +262,70 @@ function fakeDryRunChild(title: string, parentNodeToken: string): WikiChild {
 }
 
 /**
+ * Rolling reconcile-progress reporter (v0.8 progress UX).
+ *
+ * The planning phase reconciles many wiki nodes (tag / group / leaf recycling)
+ * and used to print a scattered line per node — for a 175-endpoint spec that
+ * reads for minutes like noise/stall. Instead, each reconcile bumps a counter
+ * and we emit a single rolling line throttled to every ~20 nodes OR ~2s, so the
+ * user sees steady "working" feedback. `summary()` prints a one-line wrap-up.
+ */
+function makeReconcileProgress(svcName: string) {
+  let count = 0;
+  let lastEmitCount = 0;
+  let lastEmitAt = Date.now();
+  const EVERY = 20;
+  const EVERY_MS = 2000;
+  return {
+    /** Call once per reconciled node (tag/group/leaf). Throttled output. */
+    tick(): void {
+      count++;
+      const now = Date.now();
+      if (count - lastEmitCount >= EVERY || now - lastEmitAt >= EVERY_MS) {
+        process.stdout.write(`[sync] ${svcName}: 规划中：已对账 ${count} 个节点…\n`);
+        lastEmitCount = count;
+        lastEmitAt = now;
+      }
+    },
+    summary(groups: number, tags: number, zombies: number): void {
+      process.stdout.write(
+        `[sync] ${svcName}: ✅ 规划完成：对账 ${count} 个节点 / ${tags} 标签 / ` +
+          `${groups} 分组 / ${zombies} 个待清理 zombie\n`,
+      );
+    },
+  };
+}
+
+/**
+ * Live per-push progress reporter (v0.8). Each completed endpoint push prints
+ * one `[i/N] p%` line in completion order. `total` is the upfront endpoint count
+ * so the denominator is stable. The counter increments on the JS event loop
+ * (single-threaded), so concurrent pLimit pushes report safely in finish order.
+ */
+function makePushProgress(svcName: string, total: number) {
+  let done = 0;
+  return {
+    /** Record a completed endpoint-leaf push and print its progress line. */
+    report(r: ServiceResult): void {
+      done++;
+      const sym =
+        r.status === 'ok'
+          ? '✓'
+          : r.status === 'failed'
+            ? '✗'
+            : r.status === 'warning'
+              ? '⚠'
+              : '·';
+      const detail = r.docUrl ?? r.reason ?? '';
+      process.stdout.write(
+        `[sync] ${svcName}: ${formatProgress(done, total)} ${sym} ${r.service} ` +
+          `${detail} (${(r.durationMs / 1000).toFixed(1)}s)\n`,
+      );
+    },
+  };
+}
+
+/**
  * Three-level wiki tree:
  *   parent (docToken)
  *     ├── intermediate "tag" node (one per tag)
@@ -360,6 +425,22 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     `[sync] ${svc.name}: ${tagIds.length} tag(s), ${totalEndpoints} endpoint(s) total\n`,
   );
 
+  // ── Progress UX (v0.8) ──────────────────────────────────────────────────
+  // Long endpoint-mode syncs (~175 endpoints) looked frozen: the planning /
+  // node-reconcile phase printed scattered lines for minutes, and the push
+  // phase had no [i/N] counter. We add (1) phase banners, (2) the total upfront
+  // (above), (3) a throttled rolling reconcile counter, (4) a live per-push
+  // [i/N] p% line. All progress goes to stdout — same stream the sync already
+  // uses for its [sync] lines.
+  const reconcile = makeReconcileProgress(svc.name);
+  const pushProgress = makePushProgress(svc.name, totalEndpoints);
+  process.stdout.write(
+    `[sync] ${svc.name}: 📋 阶段 1/2 规划结构（对账已有 wiki 节点）…\n`,
+  );
+  process.stdout.write(
+    `[sync] ${svc.name}: 🚀 阶段 2/2 待推送：共 ${totalEndpoints} 个接口\n`,
+  );
+
   mkdirSync(resolve(ctx.basedir, ctx.outDirRel), { recursive: true });
 
   // Step A: push overview to parent docx
@@ -437,6 +518,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   // groups that no longer exist in the spec (or whose identity drifted in a
   // way our cascade couldn't recover).
   const zombieReport: ZombieNode[] = [];
+  let groupsTotal = 0; // running count of auto-created sub-group nodes (for summary)
 
   // Sequential per-tag (parallel per-endpoint inside)
   for (const tagId of tagIds) {
@@ -467,9 +549,10 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         }
       }
     } else {
-      process.stdout.write(
-        `[sync] ${svc.name}: ${ctx.dryRun ? '(would) recycle' : 'recycled'} tag node ${tagNode.nodeToken} (was "${tagNode.title}") -> "${tagTitle}"\n`,
-      );
+      // Recycled an existing tag node (the common re-sync case). Route through
+      // the rolling reconcile counter instead of a per-node line to avoid the
+      // "frozen/noise" feeling on large specs.
+      reconcile.tick();
     }
     // Persist tagId → nodeToken so the next sync can recycle even if title drifts.
     if (!ctx.dryRun && !tagNode.nodeToken.startsWith('dryrun-')) {
@@ -518,6 +601,7 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     // Auto-decide: 4-level (path-prefix sub-groups) when worthwhile, else flat
     const grouping = autoGroupEndpoints(slices);
     const groupKeys = Object.keys(grouping.groups);
+    groupsTotal += groupKeys.length;
     if (groupKeys.length > 0) {
       process.stdout.write(
         `[sync] ${svc.name}: ${tagId} has ${slices.length} endpoint(s), ` +
@@ -534,9 +618,9 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     const leafResults: ServiceResult[] = [];
 
     // 1) Singletons: push directly under the tag node
-    for (const slice of grouping.singletons) {
-      const r = await limit(() =>
-        pushEndpointLeaf({
+    const singletonTasks = grouping.singletons.map((slice) =>
+      limit(async () => {
+        const r = await pushEndpointLeaf({
           ctx,
           svcName: svc.name,
           tagId,
@@ -546,10 +630,12 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
           slice,
           larkBin,
           outDirRelTag: `${ctx.outDirRel}/${safeFilename(tagId)}`,
-        }),
-      );
-      leafResults.push(r);
-    }
+        });
+        pushProgress.report(r); // live [i/N] p% line in completion order
+        return r;
+      }),
+    );
+    leafResults.push(...(await Promise.all(singletonTasks)));
 
     // 2) Multi-endpoint groups: create intermediate group node, then leaves
     for (const groupKey of groupKeys) {
@@ -590,9 +676,8 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
           }
         }
       } else {
-        process.stdout.write(
-          `[sync] ${svc.name}: ${ctx.dryRun ? '(would) recycle' : 'recycled'} group node ${groupNode.nodeToken} (was "${groupNode.title}") -> "${groupTitle}"\n`,
-        );
+        // Recycled an existing group node — rolling counter, not a per-node line.
+        reconcile.tick();
       }
       // Persist (tagId, groupKey) → nodeToken for next sync's recycling.
       if (!ctx.dryRun && !groupNode.nodeToken.startsWith('dryrun-')) {
@@ -631,9 +716,9 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
         }),
       );
       // Push the group's endpoint leaves
-      for (const slice of groupSlices) {
-        const r = await limit(() =>
-          pushEndpointLeaf({
+      const groupTasks = groupSlices.map((slice) =>
+        limit(async () => {
+          const r = await pushEndpointLeaf({
             ctx,
             svcName: svc.name,
             tagId,
@@ -645,10 +730,12 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
             larkBin,
             outDirRelTag: `${ctx.outDirRel}/${safeFilename(tagId)}/${safeFilename(groupTitle)}`,
             labelPrefixExtra: ` :: ${groupTitle}`,
-          }),
-        );
-        leafResults.push(r);
-      }
+          });
+          pushProgress.report(r); // live [i/N] p% line in completion order
+          return r;
+        }),
+      );
+      leafResults.push(...(await Promise.all(groupTasks)));
       // Anything left in groupLeafPool was not claimed by any current endpoint
       // under this group — record as zombie.
       for (const c of remainingChildren(groupLeafPool)) {
@@ -698,6 +785,10 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
       endpointIdentity: extractEndpointIdentity(c.title),
     });
   }
+
+  // Planning-phase wrap-up (v0.8): one-line summary so the reconcile phase has a
+  // clear "done" signal.
+  reconcile.summary(groupsTotal, tagIds.length, zombieReport.length);
 
   if (zombieReport.length > 0) {
     process.stderr.write(
