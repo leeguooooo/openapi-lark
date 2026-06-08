@@ -32,7 +32,7 @@ http(s)://.../openapi.json (NEW v1.10) ─┘
 - ✅ **中文优先** — 接口标题中文 summary 在前、参数/响应表中文化、所有 widdershins 套话已本地化
 - ✅ **allOf 自动扁平** — BaseResponse + 业务字段不再渲染成 `Inline`，完整字段表 + 自动合成 JSON 响应示例
 - ✅ **鉴权 + 约束 + 请求示例**（v0.4）— 每接口自动输出「鉴权」段（按 operation `security` 翻成中文，如 `需在请求头携带 X-Api-Key: <key>`）、参数表「约束」列回填（min/max/默认/枚举/pattern 等 widdershins 丢掉的校验）、可直接复制的 `### 请求示例` curl
-- ✅ **DocxXML 富排版**（v0.5，endpoint 模式）— 顶部「📌 速览」callout（METHOD/path · 鉴权 · 用途 · TTL/上限提示）、表头浅灰底、状态码按类着色（2xx 绿 / 3xx 蓝 / 4xx 橙 / 5xx 红）、请求/响应示例代码块带 caption。XML 推送失败自动回退 markdown，绝不阻断同步
+- ✅ **DocxXML 富排版**（v0.5，endpoint 模式）— 顶部「📌 速览」callout（METHOD/path · 鉴权 · 用途 · TTL/上限提示）、请求/响应示例代码块带 caption。XML 推送失败自动回退 markdown，绝不阻断同步。（注：Lark 文档导入 API 会剥离 callout/th/span 的颜色属性，故 v0.5.1 起不再输出表头底色与状态码着色；callout 结构与 pre caption 可正常落地）
 - ✅ **hash 缓存** — 内容没变的接口自动 skip，二次同步秒级回
 - ✅ **多 service 单 wiki 父节点** — 一个项目 N 份 openapi（admin / game / internal）自动建 N 个兄弟子节点
 - ✅ **dry-run 真不推线上**（v1.10 修复）— 本地预览看渲染效果，零服务端调用

@@ -391,13 +391,12 @@ lark-cli auth login --recommend
 - **鉴权段**（v0.4）：按 operation `security`（缺省回退全局 `security`）翻成中文指令，紧跟 METHOD/path 行，如 apiKey-in-header → `需在请求头携带 X-Api-Key: <key>`，http bearer → `需在 Authorization: Bearer <token> 头携带令牌`，`security: []` → `无需鉴权`
 - **约束列回填**（v0.4）：参数表自动插入「约束」列并从 parsed schema 填充 widdershins 丢掉的校验（minimum/maximum/默认值/minLength/pattern/枚举/format 等），如 `limit` → `1–100，默认 20`
 - **请求示例 curl**（v0.4）：从 METHOD/path（路径参数填 example）+ 必填 query 参数 + 鉴权头（+ 写操作的 JSON body）合成可复制 `### 请求示例`
-- **DocxXML 富排版**（v0.5，仅 endpoint 模式）：endpoint leaf 文档以 Lark DocxXML 推送（`docs +update --doc-format xml`），叠加四类富 block —
+- **DocxXML 富排版**（v0.5，仅 endpoint 模式）：endpoint leaf 文档以 Lark DocxXML 推送（`docs +update --doc-format xml`），叠加可正常落地的富 block —
   - 📌 顶部速览 callout：METHOD/path · 鉴权 · 用途 · TTL/上限提示（一眼卡片，不复制正文）
-  - 表头浅灰底：参数表 / 响应表 / 响应 Schema 表的表头加 `<th background-color="light-gray">`
-  - 状态码着色：响应表状态码按类 `<span text-color>`（2xx 绿 / 3xx 蓝 / 4xx 橙 / 5xx 红）
   - 示例 caption：请求/响应代码块 `<pre lang caption="请求示例 / 响应示例 (200)">`
 
   实现是 markdown→XML 转换（复用全部既有后处理），XML 生成或推送失败时自动回退 markdown 推送，绝不阻断 sync。single / tree 模式仍走 markdown。
+  > ⚠️ Lark 文档导入 API 会剥离 callout/th/span 的颜色属性（仅在编辑器内手动设置才生效），故 v0.5.1 起不再输出表头底色（`<th background-color>`）与状态码着色（`<span text-color>`）——它们是 dead markup。callout 结构 + emoji 与 pre caption 可正常落地。请勿再加回颜色属性。
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
 - **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
