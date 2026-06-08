@@ -393,12 +393,13 @@ lark-cli auth login --recommend
 - **请求示例 curl**（v0.4）：从 METHOD/path（路径参数填 example）+ 必填 query 参数 + 鉴权头（+ 写操作的 JSON body）合成可复制 `### 请求示例`
 - **DocxXML 富排版**（仅 endpoint 模式）：endpoint leaf 文档以 Lark DocxXML 推送（`docs +update --doc-format xml`），叠加可正常落地的富 block —
   - 📌 顶部速览 callout：METHOD/path · 鉴权 · 用途 · TTL/上限提示（一眼卡片，不复制正文）
-  - 示例 caption：请求/响应代码块 `<pre lang caption="请求示例 / 响应示例 (200)">`
-  - 🔀 调用流程 mermaid（v0.6，**条件**）：仅当接口分页时（检测到 cursor/nextCursor 参数或字段、hasMore/pagination 响应字段、或 limit+offset/page）才输出 `<whiteboard type="mermaid">` 的 `graph TD`，按真实操作生成（鉴权步骤 / 必填参数 / 可选过滤分支 / 读取 data 字段 / hasMore→nextCursor 翻页循环）。非分页接口不输出（2 框流程是噪音）。
-  - ☑️ 调用前检查 checkbox（v0.6，**条件**）：`<checkbox>` 仅列 spec 可推导项（鉴权 / 必填参数 / 分页），最多 4 条，少于 2 条则整段跳过。
+  - 示例 caption：请求体 / 请求 / 响应代码块 `<pre lang caption="请求体示例 / 请求示例 / 响应示例 (200)">`
+  - ☑️ 调用前检查 checkbox（**条件**）：`<checkbox>` 仅列 spec 可推导项（鉴权 / 必填参数 / 分页），最多 4 条，少于 2 条则整段跳过。
+  - 轻量 `<hr/>` 分隔各主区块（参数 / 响应 / 响应 Schema / 示例 / 调用前检查）。
+  - **v0.7 可读性**：① 响应 Schema 字段名 → 完整点路径（`data.activities[].activityId`，数组父级加 `[]`），不再用 `»»»`；② POST/PUT/PATCH 接口新增 pretty-print **请求体示例 (JSON)**（从 requestBody schema 合成，example/default/enum/format/类型默认值）置于 curl 请求示例之前，并 strip 掉 widdershins 的原始 `> Body parameter` schema dump；③ 单一鉴权方案时 drop 独立「鉴权」段（callout 已含），多方案（OR）才保留；④ 移除固定骨架的「调用流程」mermaid 图。
 
   实现是 markdown→XML 转换（复用全部既有后处理），XML 生成或推送失败时自动回退 markdown 推送，绝不阻断 sync。single / tree 模式仍走 markdown。
-  > ⚠️ Lark 文档导入 API 会剥离颜色属性（callout/th/span 的 bg + text-color，仅在编辑器内手动设置才生效）与 `<button>`，故不输出表头底色 / 状态码着色 / 按钮——它们是 dead markup。可正常落地的：callout 结构+emoji、pre caption、whiteboard(mermaid)、checkbox、grid/column。请勿再加回颜色属性或 button。
+  > ⚠️ Lark 文档导入 API 会剥离颜色属性（callout/th/span 的 bg + text-color，仅在编辑器内手动设置才生效）与 `<button>`，故不输出颜色 / 按钮——它们是 dead markup。可正常落地的：callout 结构+emoji、pre caption、checkbox、grid/column、whiteboard(mermaid)。表格单元格前导 ASCII 空格会被 trim（故 Schema 缩进用点路径而非空格）；U+3000 全角空格可存活但当前用不到。请勿再加回颜色属性或 button。
 - **sync 缓存纳入工具版本**（v0.6）：跳过缓存的 hash 现含 openapi-lark 自身版本号（`openapi-lark@<version>` 前缀）。渲染层升级（即使源 spec 未变）也会令所有接口的 hash 变化，普通 `sync` 自动重推，无需 `--force`。修复 v0.5.1 升级后 "175 skipped / 0 pushed"、清理后的输出没到 Lark 的问题。
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
