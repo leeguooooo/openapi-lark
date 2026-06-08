@@ -400,6 +400,7 @@ lark-cli auth login --recommend
 
   实现是 markdown→XML 转换（复用全部既有后处理），XML 生成或推送失败时自动回退 markdown 推送，绝不阻断 sync。single / tree 模式仍走 markdown。
   > ⚠️ Lark 文档导入 API 会剥离颜色属性（callout/th/span 的 bg + text-color，仅在编辑器内手动设置才生效）与 `<button>`，故不输出颜色 / 按钮——它们是 dead markup。可正常落地的：callout 结构+emoji、pre caption、checkbox、grid/column、whiteboard(mermaid)。表格单元格前导 ASCII 空格会被 trim（故 Schema 缩进用点路径而非空格）；U+3000 全角空格可存活但当前用不到。请勿再加回颜色属性或 button。
+- **sync 进度输出**（v0.8）：endpoint 模式不再像卡死 —— 显示阶段标题（`📋 阶段 1/2 规划结构`、`🚀 阶段 2/2 待推送：共 N 个接口`，总数前置）、规划期滚动计数（`规划中：已对账 k 个节点…`，每 ~20 节点/~2s 节流）+ 结束 summary（`规划完成：对账 X 节点 / Y 标签 / Z 分组 / W 待清理 zombie`）、每个接口推送带 `[i/N] p%`（`[42/175] 24% ✓ <标题> — <METHOD path> … (2.5s)`）。dry-run 也走推送计数。失败/告警仍在结尾汇总。
 - **sync 缓存纳入工具版本**（v0.6）：跳过缓存的 hash 现含 openapi-lark 自身版本号（`openapi-lark@<version>` 前缀）。渲染层升级（即使源 spec 未变）也会令所有接口的 hash 变化，普通 `sync` 自动重推，无需 `--force`。修复 v0.5.1 升级后 "175 skipped / 0 pushed"、清理后的输出没到 Lark 的问题。
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
