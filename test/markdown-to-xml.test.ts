@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   escapeXmlText,
   inlineToXml,
+  stripMarkdownInline,
   buildOverviewCallout,
   buildPreCallChecklist,
   detectPagination,
@@ -540,5 +541,95 @@ unclosed fence`;
     const xml = markdownToXml('# T\n\nbody', api, 'T');
     expect(xml).toContain('<callout');
     expect(xml).toContain('<title>T</title>');
+  });
+});
+
+describe('stripMarkdownInline', () => {
+  it('strips list marker, bold, code, links to plain text', () => {
+    expect(stripMarkdownInline('- **数据源**：保留 30 天（TTL）。')).toBe(
+      '数据源：保留 30 天（TTL）。',
+    );
+    expect(stripMarkdownInline('用 `nextCursor` 续拉')).toBe('用 nextCursor 续拉');
+    expect(stripMarkdownInline('see [docs](https://x)')).toBe('see docs');
+  });
+});
+
+describe('markdownToXml — v0.8 description-body regression', () => {
+  // Single-scheme endpoint whose description is a markdown bullet list + a
+  // rationale paragraph (shaped like the real presence-records spec). v0.7 dropped
+  // the whole body after the callout; this locks it back in.
+  const api = {
+    components: {
+      securitySchemes: { ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-Api-Key' } },
+    },
+    paths: {
+      '/api/admin/voice-room/{roomNo}/presence-records': {
+        get: {
+          summary: '查询房间用户进出记录（管理端）',
+          security: [{ ApiKeyAuth: [] }],
+          description:
+            '返回指定房间的用户进出事件流（USER_JOINED / USER_LEFT / USER_KICKED）。\n\n' +
+            '- **数据源**：Zego 回调写入的活动记录，保留 30 天（TTL）。\n' +
+            '- **分页**：游标方式 —— 用 `nextCursor` 续拉，直到 `hasMore=false`。\n\n' +
+            '**为什么用游标、不用页码/offset/total**：后端是 DynamoDB，只支持顺序续读，不提供跳页。',
+        },
+      },
+    },
+  };
+
+  // The markdown as it reaches markdownToXml (security section injected upstream,
+  // then the description body, then the 参数 heading).
+  const md = `# T
+
+\`GET /api/admin/voice-room/{roomNo}/presence-records\`
+
+### 鉴权
+
+需在请求头携带 \`X-Api-Key: <key>\`。
+
+返回指定房间的用户进出事件流（USER_JOINED / USER_LEFT / USER_KICKED）。
+
+- **数据源**：Zego 回调写入的活动记录，保留 30 天（TTL）。
+- **分页**：游标方式 —— 用 \`nextCursor\` 续拉，直到 \`hasMore=false\`。
+
+**为什么用游标、不用页码/offset/total**：后端是 DynamoDB，只支持顺序续读，不提供跳页。
+
+<h3 id="p">参数</h3>
+
+| 名称 | 位置 |
+|---|---|
+|roomNo|path|
+`;
+
+  it('renders the full description body (bullets + rationale paragraph)', () => {
+    const xml = markdownToXml(md, api, 'T');
+    // bullet list survives
+    expect(xml).toContain('<ul>');
+    expect(xml).toContain('<li><b>数据源</b>：');
+    expect(xml).toContain('<li><b>分页</b>：');
+    // the pagination-rationale paragraph survives (the line the user noticed missing)
+    expect(xml).toContain('为什么用游标');
+    expect(xml).toContain('后端是 DynamoDB，只支持顺序续读，不提供跳页。');
+    // intro line survives
+    expect(xml).toContain('返回指定房间的用户进出事件流');
+  });
+
+  it('callout 注意 line is clean (no raw markdown tokens)', () => {
+    const callout = buildOverviewCallout(api);
+    const noteMatch = callout.match(/⚠️ 注意：([^<]*)</);
+    if (noteMatch) {
+      expect(noteMatch[1]).not.toContain('- ');
+      expect(noteMatch[1]).not.toContain('**');
+      expect(noteMatch[1]).toContain('保留 30 天（TTL）');
+    }
+    // callout must NOT swallow the whole description
+    expect(callout).not.toContain('为什么用游标');
+  });
+
+  it('drops the redundant bare `METHOD /path` code-span line under the callout', () => {
+    const xml = markdownToXml(md, api, 'T');
+    expect(xml).not.toContain('<p><code>GET /api/admin/voice-room/{roomNo}/presence-records</code></p>');
+    // but the callout still shows METHOD+path in bold
+    expect(xml).toContain('<b>GET /api/admin/voice-room/{roomNo}/presence-records</b>');
   });
 });
