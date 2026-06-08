@@ -20,6 +20,11 @@ const stdout = process.env.FAKE_LARK_STDOUT || '';
 const stderr = process.env.FAKE_LARK_STDERR || '';
 const exit = Number.parseInt(process.env.FAKE_LARK_EXIT || '0', 10);
 function emit() {
+  // When FAKE_LARK_ECHO_ARGV is set, print the received argv so tests can assert
+  // which flags the caller passed (e.g. --doc-format xml).
+  if (process.env.FAKE_LARK_ECHO_ARGV) {
+    process.stdout.write('ARGV ' + process.argv.slice(2).join(' ') + '\\n');
+  }
   if (stdout) process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
   process.exit(exit);

@@ -11,9 +11,12 @@ export type PushFailureReason =
 
 export interface PushInput {
   docToken: string;
-  /** Path passed to lark-cli's --markdown @<path>. lark-cli requires this to be
+  /** Path passed to lark-cli's --content @<path>. lark-cli requires this to be
    *  relative to `cwd`. Caller is responsible for using a relative path. */
   mdPath: string;
+  /** Content format for `--doc-format`. Defaults to 'markdown'. Use 'xml' to
+   *  push Lark DocxXML (rich blocks: callout, table header bg, span colors). */
+  docFormat?: 'markdown' | 'xml';
   /** Working directory for the lark-cli subprocess. Defaults to process.cwd(). */
   cwd?: string;
   larkBin?: string;
@@ -65,8 +68,6 @@ const PUSH_BASE_ARGS = [
   'v2',
   '--command',
   'overwrite',
-  '--doc-format',
-  'markdown',
 ];
 
 function classifyFailure(stderr: string, status: number | null): PushFailureReason {
@@ -95,6 +96,8 @@ export function push(input: PushInput): PushResult {
   const bin = input.larkBin ?? 'lark-cli';
   const args = [
     ...PUSH_BASE_ARGS,
+    '--doc-format',
+    input.docFormat ?? 'markdown',
     '--doc',
     input.docToken,
     '--content',

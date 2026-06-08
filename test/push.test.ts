@@ -127,6 +127,53 @@ describe('push (with fake lark)', () => {
     }
   });
 
+  it('passes --doc-format xml when docFormat is xml', () => {
+    // The fake-lark echoes its argv to stdout so we can assert the flag.
+    const argEcho = makeFakeLark();
+    try {
+      const result = push({
+        docToken: 'doccnX',
+        mdPath: 'rel/x.xml',
+        docFormat: 'xml',
+        larkBin: 'lark',
+        timeoutMs: 5000,
+        env: {
+          PATH: pathWith(argEcho.dir),
+          FAKE_LARK_ECHO_ARGV: '1',
+          FAKE_LARK_EXIT: '0',
+        },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.raw).toContain('--doc-format');
+      expect(result.raw).toContain('xml');
+      expect(result.raw).toContain('@rel/x.xml');
+    } finally {
+      rmSync(argEcho.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('defaults to --doc-format markdown when docFormat omitted', () => {
+    const argEcho = makeFakeLark();
+    try {
+      const result = push({
+        docToken: 'doccnX',
+        mdPath: 'rel/x.md',
+        larkBin: 'lark',
+        timeoutMs: 5000,
+        env: {
+          PATH: pathWith(argEcho.dir),
+          FAKE_LARK_ECHO_ARGV: '1',
+          FAKE_LARK_EXIT: '0',
+        },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.raw).toContain('markdown');
+      expect(result.raw).not.toContain('xml');
+    } finally {
+      rmSync(argEcho.dir, { recursive: true, force: true });
+    }
+  });
+
   it('classifies permission failure', () => {
     const result = push({
       docToken: 'doccnX',
