@@ -1,6 +1,6 @@
 {
   "name": "openapi-lark",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Sync OpenAPI (Swagger) spec to Lark / Feishu wiki & docx — one wiki node per endpoint, auto-grouped by tag. Drop-in yapi replacement for chanfana / Hono / FastAPI / NestJS Swagger projects.",
   "keywords": [
     "openapi",
