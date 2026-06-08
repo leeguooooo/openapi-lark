@@ -62,11 +62,45 @@ export function normalizeMarkdownForHash(md: string): string {
 }
 
 /**
- * Hash markdown after normalization. Use this for cache lookup; keep raw
- * `sha256()` available for tests / debugging.
+ * Resolve the openapi-lark tool version (package.json `version`). Used as a
+ * component of the cache hash (see below). Falls back to a sentinel when the
+ * package.json can't be read so the cache still works in odd environments.
+ *
+ * Cached after first read — package.json doesn't change within a process.
  */
-export function hashMarkdown(md: string): string {
-  return sha256(normalizeMarkdownForHash(md));
+let _toolVersionCache: string | null = null;
+export function toolVersion(): string {
+  if (_toolVersionCache !== null) return _toolVersionCache;
+  try {
+    const pkgPath = resolve(import.meta.dirname ?? '.', '../package.json');
+    const raw = readFileSync(pkgPath, 'utf8');
+    const pkg = JSON.parse(raw) as { version?: string };
+    _toolVersionCache = typeof pkg.version === 'string' ? pkg.version : '0.0.0-unknown';
+  } catch {
+    _toolVersionCache = '0.0.0-unknown';
+  }
+  return _toolVersionCache;
+}
+
+/**
+ * Hash markdown after normalization, mixing in the openapi-lark tool VERSION.
+ *
+ * Why the version is part of the key: the rendered/pushed docx is produced by
+ * BOTH the source spec AND the renderer (markdown→XML transform, rich blocks,
+ * post-process). A renderer-only upgrade (e.g. v0.5.1 dropping dead color
+ * styles, or v0.6 adding the mermaid flow) changes the PUSHED output without
+ * changing the source markdown — so a spec-only hash would report "unchanged"
+ * and skip the push, leaving stale docs live (observed after v0.5.1: 175
+ * skipped / 0 pushed). Folding the version in means every tool upgrade
+ * invalidates all entries and triggers a normal re-push (no `--force` needed).
+ *
+ * Keep raw `sha256()` available for tests / debugging.
+ *
+ * `versionOverride` is for tests — production callers omit it.
+ */
+export function hashMarkdown(md: string, versionOverride?: string): string {
+  const version = versionOverride ?? toolVersion();
+  return sha256(`openapi-lark@${version}\n` + normalizeMarkdownForHash(md));
 }
 
 export function lockfilePath(basedir: string, serviceName?: string): string {

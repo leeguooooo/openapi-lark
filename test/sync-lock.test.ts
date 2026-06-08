@@ -11,6 +11,7 @@ import {
   lockfilePath,
   normalizeMarkdownForHash,
   hashMarkdown,
+  toolVersion,
 } from '../src/sync-lock.js';
 
 let dir: string;
@@ -105,6 +106,27 @@ describe('sync-lock', () => {
 
   it('hashMarkdown: different hash for actually-different content', () => {
     expect(hashMarkdown('# A\nbody\n')).not.toBe(hashMarkdown('# A\nbody2\n'));
+  });
+
+  it('hashMarkdown: tool VERSION is part of the key (renderer upgrade re-pushes)', () => {
+    // Same markdown, different tool version → different hash, so a renderer-only
+    // upgrade (which changes pushed output without changing source markdown)
+    // invalidates the cache and triggers a normal re-push.
+    const md = '# A\nbody\n';
+    expect(hashMarkdown(md, '0.5.1')).not.toBe(hashMarkdown(md, '0.6.0'));
+    // Same version → stable.
+    expect(hashMarkdown(md, '0.6.0')).toBe(hashMarkdown(md, '0.6.0'));
+  });
+
+  it('hashMarkdown: default version override uses the real tool version', () => {
+    const md = '# A\nbody\n';
+    expect(hashMarkdown(md)).toBe(hashMarkdown(md, toolVersion()));
+  });
+
+  it('toolVersion returns a non-empty semver-ish string', () => {
+    const v = toolVersion();
+    expect(typeof v).toBe('string');
+    expect(v.length).toBeGreaterThan(0);
   });
 
   it('saves with stable key ordering', () => {
