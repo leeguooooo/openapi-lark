@@ -397,6 +397,7 @@ lark-cli auth login --recommend
   - ☑️ 调用前检查 checkbox（**条件**）：`<checkbox>` 仅列 spec 可推导项（鉴权 / 必填参数 / 分页），最多 4 条，少于 2 条则整段跳过。
   - 轻量 `<hr/>` 分隔各主区块（参数 / 响应 / 响应 Schema / 示例 / 调用前检查）。
   - **v0.7 可读性**：① 响应 Schema 字段名 → 完整点路径（`data.activities[].activityId`，数组父级加 `[]`），不再用 `»»»`；② POST/PUT/PATCH 接口新增 pretty-print **请求体示例 (JSON)**（从 requestBody schema 合成，example/default/enum/format/类型默认值）置于 curl 请求示例之前，并 strip 掉 widdershins 的原始 `> Body parameter` schema dump；③ 单一鉴权方案时 drop 独立「鉴权」段（callout 已含），多方案（OR）才保留；④ 移除固定骨架的「调用流程」mermaid 图。
+  - **v0.9 必填列**：所有字段表（参数 / 响应 Schema / 请求体）的「必填」列单元格 → 必填用 `✅`、可选用 `—`（em dash）。识别 `true`/`false` 与 `是`/`否`/`required` 等取值；仅改该列单元格，列头与其他列不动。Lark 导入剥离 text-color，红字不可行，故用导入可存活的 emoji。
 
   实现是 markdown→XML 转换（复用全部既有后处理），XML 生成或推送失败时自动回退 markdown 推送，绝不阻断 sync。single / tree 模式仍走 markdown。
   > ⚠️ Lark 文档导入 API 会剥离颜色属性（callout/th/span 的 bg + text-color，仅在编辑器内手动设置才生效）与 `<button>`，故不输出颜色 / 按钮——它们是 dead markup。可正常落地的：callout 结构+emoji、pre caption、checkbox、grid/column、whiteboard(mermaid)。表格单元格前导 ASCII 空格会被 trim（故 Schema 缩进用点路径而非空格）；U+3000 全角空格可存活但当前用不到。请勿再加回颜色属性或 button。
