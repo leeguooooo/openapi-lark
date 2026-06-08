@@ -4,6 +4,8 @@
  * Each transformer is small and isolated so tests can pin them individually.
  */
 
+import { enrichParamsTable } from './constraints.js';
+
 /**
  * KNOWN_ISSUE #2: 表格单元里含 `|` 会破坏 markdown 解析。
  *
@@ -399,7 +401,45 @@ export function localizeHeadings(md: string): string {
     /\|\s*Status\s*\|\s*Meaning\s*\|\s*Description\s*\|\s*Schema\s*\|/g,
     '| 状态码 | 含义 | 描述 | Schema |',
   );
+  // Enum table header (widdershins emits `|Parameter|Value|` for the
+  // "Enumerated Values" section — the only un-localized header left).
+  out = out.replace(
+    /\|\s*Parameter\s*\|\s*Value\s*\|/g,
+    '| 参数 | 取值 |',
+  );
   return out;
+}
+
+/**
+ * widdershins fills the 响应 table's Schema column with the literal `Inline`
+ * (no link target) for inline/allOf schemas — untranslated and useless. Replace
+ * the cell value with a pointer to the 响应 Schema section below. Operates only
+ * on the 状态码|含义|描述|Schema table body rows.
+ */
+export function localizeInlineSchemaCell(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let inResponseTable = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/\|\s*状态码\s*\|\s*含义\s*\|\s*描述\s*\|\s*Schema\s*\|/.test(trimmed)) {
+      inResponseTable = true;
+      out.push(line);
+      continue;
+    }
+    if (inResponseTable) {
+      if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) {
+        inResponseTable = false;
+        out.push(line);
+        continue;
+      }
+      // Replace a trailing `| Inline |` cell with the localized pointer.
+      out.push(line.replace(/\|\s*Inline\s*\|\s*$/, '| 见下方响应 Schema |'));
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
 }
 
 /**
@@ -448,7 +488,11 @@ export function postProcess(md: string, api?: any, singleOperationSummary?: stri
   out = stripRootBodyParamRow(out);
   out = clearNonePlaceholders(out);
   out = localizeHeadings(out);
+  out = localizeInlineSchemaCell(out);
   if (api) out = replaceOperationIdHeadings(out, api);
+  // Enrich the parameters table's 约束 column from the parsed schema (widdershins
+  // drops minimum/maximum/default/pattern/…). Needs the dereferenced api.
+  if (api) out = enrichParamsTable(out, api);
   if (singleOperationSummary) {
     out = collapseRedundantOperationIntro(out, singleOperationSummary);
   }

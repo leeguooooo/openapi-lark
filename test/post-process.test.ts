@@ -7,6 +7,7 @@ import {
   stripRootBodyParamRow,
   clearNonePlaceholders,
   localizeHeadings,
+  localizeInlineSchemaCell,
   replaceOperationIdHeadings,
 } from '../src/renderer/post-process.js';
 
@@ -392,6 +393,40 @@ describe('localizeHeadings', () => {
     const md = `Some text discussing Parameters and Responses inline.`;
     const out = localizeHeadings(md);
     expect(out).toContain('Parameters and Responses');
+  });
+
+  it('localizes the enum table header |Parameter|Value|', () => {
+    const md = `#### 枚举值
+|Parameter|Value|
+|---|---|
+|activityType|USER_JOINED|`;
+    const out = localizeHeadings(md);
+    expect(out).toContain('| 参数 | 取值 |');
+    expect(out).not.toContain('|Parameter|Value|');
+  });
+});
+
+describe('localizeInlineSchemaCell', () => {
+  it('replaces Inline with a pointer in the 响应 table', () => {
+    const md = `| 状态码 | 含义 | 描述 | Schema |
+|---|---|---|---|
+|200|OK|成功|Inline|
+|400|Bad Request|参数错误|Inline|`;
+    const out = localizeInlineSchemaCell(md);
+    expect(out).toContain('|200|OK|成功| 见下方响应 Schema |');
+    expect(out).toContain('|400|Bad Request|参数错误| 见下方响应 Schema |');
+    expect(out).not.toContain('|Inline|');
+  });
+
+  it('only touches the 响应 table, not other Inline text', () => {
+    const md = `Some Inline text here.
+
+| 名称 | 类型 |
+|---|---|
+|x|Inline|`;
+    const out = localizeInlineSchemaCell(md);
+    expect(out).toContain('Some Inline text here.');
+    expect(out).toContain('|x|Inline|');
   });
 });
 

@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { postProcess } from '../post-process.js';
 import { detectHeadingJumps, type HeadingWarning } from '../heading-check.js';
 import { exampleForOperation } from '../example-from-schema.js';
+import { injectSecuritySection } from '../security-section.js';
+import { injectRequestExample } from '../request-example.js';
 
 // Silence the doT template engine's compile-time chatter (widdershins emits
 // 24+ lines of "Loaded def authentication.def" / "Compiling code_csharp.dot"
@@ -87,12 +89,15 @@ export async function renderWiddershins(input: RenderInput): Promise<RenderOutpu
   });
 
   let md = postProcess(raw, input.api, input.singleOperationSummary);
-  // For single-operation slices (endpoint mode), append a real "响应示例" block
-  // synthesized from the schema. Widdershins' own example dump is broken for
-  // allOf schemas; we already strip it in post-process. This replacement is
-  // accurate (uses op.responses schema after allOf-flatten).
+  // For single-operation slices (endpoint mode):
+  //  1. inject a 鉴权 section (operation's effective security in plain 中文)
+  //  2. append a synthesized 请求示例 (curl) + 响应示例 (JSON). Widdershins' own
+  //     example dump is broken for allOf schemas (stripped in post-process);
+  //     these replacements use op schemas after allOf-flatten.
   if (input.singleOperationSummary) {
+    md = injectSecuritySection(md, input.api);
     md = appendResponseExample(md, input.api);
+    md = injectRequestExample(md, input.api);
   }
   const headingWarnings = detectHeadingJumps(md);
   return { markdown: md, headingWarnings };
