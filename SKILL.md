@@ -391,12 +391,15 @@ lark-cli auth login --recommend
 - **鉴权段**（v0.4）：按 operation `security`（缺省回退全局 `security`）翻成中文指令，紧跟 METHOD/path 行，如 apiKey-in-header → `需在请求头携带 X-Api-Key: <key>`，http bearer → `需在 Authorization: Bearer <token> 头携带令牌`，`security: []` → `无需鉴权`
 - **约束列回填**（v0.4）：参数表自动插入「约束」列并从 parsed schema 填充 widdershins 丢掉的校验（minimum/maximum/默认值/minLength/pattern/枚举/format 等），如 `limit` → `1–100，默认 20`
 - **请求示例 curl**（v0.4）：从 METHOD/path（路径参数填 example）+ 必填 query 参数 + 鉴权头（+ 写操作的 JSON body）合成可复制 `### 请求示例`
-- **DocxXML 富排版**（v0.5，仅 endpoint 模式）：endpoint leaf 文档以 Lark DocxXML 推送（`docs +update --doc-format xml`），叠加可正常落地的富 block —
+- **DocxXML 富排版**（仅 endpoint 模式）：endpoint leaf 文档以 Lark DocxXML 推送（`docs +update --doc-format xml`），叠加可正常落地的富 block —
   - 📌 顶部速览 callout：METHOD/path · 鉴权 · 用途 · TTL/上限提示（一眼卡片，不复制正文）
   - 示例 caption：请求/响应代码块 `<pre lang caption="请求示例 / 响应示例 (200)">`
+  - 🔀 调用流程 mermaid（v0.6，**条件**）：仅当接口分页时（检测到 cursor/nextCursor 参数或字段、hasMore/pagination 响应字段、或 limit+offset/page）才输出 `<whiteboard type="mermaid">` 的 `graph TD`，按真实操作生成（鉴权步骤 / 必填参数 / 可选过滤分支 / 读取 data 字段 / hasMore→nextCursor 翻页循环）。非分页接口不输出（2 框流程是噪音）。
+  - ☑️ 调用前检查 checkbox（v0.6，**条件**）：`<checkbox>` 仅列 spec 可推导项（鉴权 / 必填参数 / 分页），最多 4 条，少于 2 条则整段跳过。
 
   实现是 markdown→XML 转换（复用全部既有后处理），XML 生成或推送失败时自动回退 markdown 推送，绝不阻断 sync。single / tree 模式仍走 markdown。
-  > ⚠️ Lark 文档导入 API 会剥离 callout/th/span 的颜色属性（仅在编辑器内手动设置才生效），故 v0.5.1 起不再输出表头底色（`<th background-color>`）与状态码着色（`<span text-color>`）——它们是 dead markup。callout 结构 + emoji 与 pre caption 可正常落地。请勿再加回颜色属性。
+  > ⚠️ Lark 文档导入 API 会剥离颜色属性（callout/th/span 的 bg + text-color，仅在编辑器内手动设置才生效）与 `<button>`，故不输出表头底色 / 状态码着色 / 按钮——它们是 dead markup。可正常落地的：callout 结构+emoji、pre caption、whiteboard(mermaid)、checkbox、grid/column。请勿再加回颜色属性或 button。
+- **sync 缓存纳入工具版本**（v0.6）：跳过缓存的 hash 现含 openapi-lark 自身版本号（`openapi-lark@<version>` 前缀）。渲染层升级（即使源 spec 未变）也会令所有接口的 hash 变化，普通 `sync` 自动重推，无需 `--force`。修复 v0.5.1 升级后 "175 skipped / 0 pushed"、清理后的输出没到 Lark 的问题。
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
 - **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
