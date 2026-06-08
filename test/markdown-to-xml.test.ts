@@ -7,6 +7,7 @@ import {
   buildPreCallChecklist,
   detectPagination,
   dottifySchemaRows,
+  markRequiredColumn,
   markdownToXml,
 } from '../src/renderer/markdown-to-xml.js';
 
@@ -242,6 +243,90 @@ describe('dottifySchemaRows (v0.7 »→dotted path)', () => {
   it('is a no-op when there are no » markers', () => {
     const flat = [header, ['plainField', 'string', 'true', '', 'x']];
     expect(dottifySchemaRows(flat)).toEqual(flat);
+  });
+});
+
+describe('markRequiredColumn (v0.9 必填 → ✅ / —)', () => {
+  it('maps true→✅ / false→— in the 必填 column, leaving other columns untouched', () => {
+    const rows = [
+      ['名称', '位置', '类型', '必填', '约束', '描述'],
+      ['roomNo', 'path', 'string', 'true', '', '房间号'],
+      ['limit', 'query', 'integer', 'false', '1–100', '条数'],
+    ];
+    const out = markRequiredColumn(rows);
+    // header preserved verbatim
+    expect(out[0]).toEqual(['名称', '位置', '类型', '必填', '约束', '描述']);
+    // 必填 column (idx 3) mapped
+    expect(out[1][3]).toBe('✅');
+    expect(out[2][3]).toBe('—');
+    // every other column untouched
+    expect(out[1]).toEqual(['roomNo', 'path', 'string', '✅', '', '房间号']);
+    expect(out[2]).toEqual(['limit', 'query', 'integer', '—', '1–100', '条数']);
+  });
+
+  it('handles localized 是/否 values too', () => {
+    const rows = [
+      ['名称', '必填', '描述'],
+      ['a', '是', 'x'],
+      ['b', '否', 'y'],
+    ];
+    const out = markRequiredColumn(rows);
+    expect(out[1][1]).toBe('✅');
+    expect(out[2][1]).toBe('—');
+  });
+
+  it('works when 必填 is not at a fixed index (schema table layout)', () => {
+    const rows = [
+      ['名称', '类型', '必填', '约束', '描述'],
+      ['success', 'boolean', 'true', '', ''],
+      ['errCode', 'string', 'false', '', ''],
+    ];
+    const out = markRequiredColumn(rows);
+    expect(out[1][2]).toBe('✅');
+    expect(out[2][2]).toBe('—');
+  });
+
+  it('leaves an empty 必填 cell empty (not —)', () => {
+    const rows = [
+      ['名称', '必填', '描述'],
+      ['a', '', 'x'],
+    ];
+    expect(markRequiredColumn(rows)[1][1]).toBe('');
+  });
+
+  it('is a no-op for tables without a 必填/Required column (响应/枚举值)', () => {
+    const statusTable = [
+      ['状态码', '含义', '描述', 'Schema'],
+      ['200', 'OK', '成功', '见下方响应 Schema'],
+    ];
+    expect(markRequiredColumn(statusTable)).toEqual(statusTable);
+    const enumTable = [
+      ['参数', '取值'],
+      ['activityType', 'USER_JOINED'],
+    ];
+    expect(markRequiredColumn(enumTable)).toEqual(enumTable);
+  });
+});
+
+describe('markdownToXml — 必填 column markers (end-to-end)', () => {
+  it('renders ✅ for required and — for optional through the transform', () => {
+    const md = `# T
+
+<h3 id="p">参数</h3>
+
+| 名称 | 位置 | 类型 | 必填 | 约束 | 描述 |
+|---|---|---|---|---|---|
+|roomNo|path|string|true| |房间号|
+|limit|query|integer|false|1–100|条数|
+`;
+    const api = { paths: { '/x': { get: { summary: 's', security: [] } } } };
+    const xml = markdownToXml(md, api, 'T');
+    // required → ✅, optional → —
+    expect(xml).toContain('<td>roomNo</td><td>path</td><td>string</td><td>✅</td>');
+    expect(xml).toContain('<td>limit</td><td>query</td><td>integer</td><td>—</td>');
+    // no raw true/false leaked in the 必填 cells
+    expect(xml).not.toContain('<td>true</td>');
+    expect(xml).not.toContain('<td>false</td>');
   });
 });
 
