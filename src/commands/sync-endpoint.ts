@@ -14,6 +14,7 @@ import {
 import { autoGroupEndpoints } from '../renderer/auto-group.js';
 import { groupHeadingWarnings } from '../renderer/heading-check.js';
 import { push } from '../lark/push.js';
+import { styleDoc } from '../lark/block-style.js';
 import {
   resolveWikiNode,
   listWikiChildren,
@@ -1062,6 +1063,25 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
       title: titleForLock,
       syncedAt: new Date().toISOString(),
     });
+    // v0.10: post-push block-style pass — apply real Lark colors the import path
+    // can't carry (currently: 必填 tbody cells → red). Best-effort polish: any
+    // failure logs a warning and is swallowed; the doc already has its content,
+    // so a styling hiccup must NOT flip the push result to failed. Skipped for
+    // dry-run (no push happened) and for fake dry-run tokens.
+    if (!ctx.dryRun && !docToken.startsWith('dryrun-')) {
+      const styleRes = styleDoc({
+        documentId: docToken,
+        larkBin: ctx.config.larkBin,
+        timeoutMs: ctx.timeoutMs,
+      });
+      if (styleRes.ok && styleRes.styled > 0) {
+        process.stdout.write(`[sync] ${label}: 🎨 着色 ${styleRes.styled} 处（必填→红）\n`);
+      } else if (!styleRes.ok) {
+        process.stderr.write(
+          `[sync] ${label}: ⚠ 块着色跳过（不影响内容）：${styleRes.warning}\n`,
+        );
+      }
+    }
     return {
       service: label,
       status: pushed.url ? 'ok' : 'warning',
