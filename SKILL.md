@@ -388,6 +388,9 @@ lark-cli auth login --recommend
 - **段落本地化**：Parameters→参数 / Responses→响应 / Response Schema→响应 Schema / Enumerated Values→枚举值 等
 - **operationId → summary**：`## getXxx` 替换为 `## 获取 XXX`
 - **响应 JSON 示例**：从 schema 合成真实示例值（用 example/format/enum/类型默认值），末尾 `### 响应示例 (200)`
+- **鉴权段**（v0.4）：按 operation `security`（缺省回退全局 `security`）翻成中文指令，紧跟 METHOD/path 行，如 apiKey-in-header → `需在请求头携带 X-Api-Key: <key>`，http bearer → `需在 Authorization: Bearer <token> 头携带令牌`，`security: []` → `无需鉴权`
+- **约束列回填**（v0.4）：参数表自动插入「约束」列并从 parsed schema 填充 widdershins 丢掉的校验（minimum/maximum/默认值/minLength/pattern/枚举/format 等），如 `limit` → `1–100，默认 20`
+- **请求示例 curl**（v0.4）：从 METHOD/path（路径参数填 example）+ 必填 query 参数 + 鉴权头（+ 写操作的 JSON body）合成可复制 `### 请求示例`
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
 - **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
