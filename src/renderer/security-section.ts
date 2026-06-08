@@ -92,10 +92,39 @@ export function securitySectionBody(op: any, api: any): string {
 }
 
 /**
+ * How many distinct security ALTERNATIVES (OR-options) the operation resolves to.
+ *  - 0  → no auth (无需鉴权)
+ *  - 1  → a single requirement (possibly several AND-ed schemes counted as one
+ *         alternative — the callout's one-liner can carry "A，且 B")
+ *  - ≥2 → multiple OR-options (callout can't list them; keep the full section)
+ *
+ * Used for the v0.7 鉴权 dedup: when the callout already shows the only option,
+ * the standalone `### 鉴权` section is redundant and is dropped.
+ */
+export function securityAlternativeCount(op: any, api: any): number {
+  let requirements: any[] | undefined;
+  if (Array.isArray(op?.security)) {
+    requirements = op.security;
+  } else if (Array.isArray(api?.security)) {
+    requirements = api.security;
+  }
+  if (!requirements) return 0;
+  // Count requirement objects that demand auth. An empty `{}` requirement means
+  // "no auth for this alternative" and is not a distinct auth instruction.
+  return requirements.filter((r) => isObj(r) && Object.keys(r).length > 0).length;
+}
+
+/**
  * Inject the 「鉴权」 section into the rendered markdown right after the
  * METHOD/path code line (`` `GET /api/...` ``). Falls back to inserting after
  * the operation description / before the 参数 section when the code line isn't
  * found. Endpoint-mode only (one operation per doc).
+ *
+ * Always emits the section into the MARKDOWN (so the markdown-fallback push still
+ * carries auth). The v0.7 dedup — dropping this section when a single-scheme
+ * endpoint's top callout already states the auth — is applied later in the XML
+ * transform (markdown-to-xml.ts), because the callout only exists in the XML
+ * output; the markdown path has no callout and must keep the section.
  */
 export function injectSecuritySection(md: string, api: any): string {
   const paths = isObj(api?.paths) ? api.paths : {};
