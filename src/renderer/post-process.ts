@@ -185,6 +185,18 @@ export function stripWiddershinsBoilerplate(md: string): string {
   // widdershins <aside> blocks: "This operation does not require authentication"
   // and similar are useless when we render per-endpoint
   out = out.replace(/<aside[^>]*>[\s\S]*?<\/aside>/g, '');
+  // Global preamble "Base URLs:" list — widdershins emits the spec's servers as
+  // a bullet list at the top of every doc. In endpoint mode the request example
+  // already shows the concrete base URL; the bare list is noise.
+  out = out.replace(/^Base URLs:\s*$\n+(?:^[ \t]*[*-] .*$\n?|^[ \t]*$\n)+/gm, '');
+  // Global "# Authentication" section — lists EVERY scheme in the spec. We now
+  // render a per-operation 「鉴权」 section + a top callout that name the exact
+  // header THIS endpoint needs, so the global block is redundant noise. Strip the
+  // `# Authentication` heading plus its following bullet list / blank lines.
+  out = out.replace(
+    /^#\s+Authentication\s*$\n+(?:^[ \t]*[*-].*$\n?|^[ \t]*$\n)+/gm,
+    '',
+  );
   // Auto-generated operation heading "## post__otp_applegame": when an operation
   // has NO operationId, widdershins synthesizes a heading from method + path
   // (path `/` → `_`), e.g. `## post__otp_applegame`. It's ugly and redundant —

@@ -224,6 +224,33 @@ text`;
     expect(out).not.toMatch(/\n{3,}/);
   });
 
+  it('strips the global "Base URLs:" preamble list', () => {
+    const md = `Base URLs:
+
+* <a href="https://api.example.com">https://api.example.com</a>
+
+\`GET /x\``;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('Base URLs:');
+    expect(out).not.toContain('api.example.com');
+    expect(out).toContain('`GET /x`');
+  });
+
+  it('strips the global "# Authentication" section (redundant with per-op 鉴权)', () => {
+    const md = `# Authentication
+
+- HTTP Authentication, scheme: bearer
+
+* API Key (ApiKeyAuth)
+    - Parameter Name: **X-Api-Key**, in: header.
+
+\`GET /x\``;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('# Authentication');
+    expect(out).not.toContain('Parameter Name');
+    expect(out).toContain('`GET /x`');
+  });
+
   it('removes multiple status response dumps', () => {
     const md = `> 200 Response
 

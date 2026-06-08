@@ -127,7 +127,7 @@ export interface EndpointSlice {
  */
 function endpointCloneShallow(api: any): any {
   const fullTitle = api.info?.title ?? '';
-  return {
+  const clone: any = {
     openapi: api.openapi,
     info: {
       // Keep version so widdershins doesn't error, but suppress title/description
@@ -137,8 +137,26 @@ function endpointCloneShallow(api: any): any {
       description: '',
       'x-source-api-title': fullTitle, // preserved for debugging
     },
-    // Intentionally drop: servers, components, security, tags (the preamble blocks)
   };
+  // Preserve the bits the per-endpoint rendering genuinely needs:
+  //  - components.securitySchemes: required to translate the operation's
+  //    `security` into a concrete 鉴权 instruction (X-Api-Key / Bearer …) and
+  //    the request-example auth header. (components.schemas is intentionally
+  //    dropped — refs are already dereferenced inline, so keeping it would make
+  //    widdershins render a giant "Schemas" appendix.)
+  //  - servers: gives the request-example curl a real base URL.
+  //  - security: spec-global default the 鉴权 resolver falls back to.
+  if (api.components && typeof api.components === 'object' && api.components.securitySchemes) {
+    clone.components = { securitySchemes: api.components.securitySchemes };
+  }
+  if (Array.isArray(api.servers) && api.servers.length > 0) {
+    clone.servers = api.servers;
+  }
+  if (Array.isArray(api.security)) {
+    clone.security = api.security;
+  }
+  // Intentionally still dropped: components.schemas, tags (the preamble blocks).
+  return clone;
 }
 
 export function splitByEndpoint(api: any): EndpointSlice[] {
