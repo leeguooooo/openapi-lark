@@ -246,8 +246,8 @@ describe('dottifySchemaRows (v0.7 »→dotted path)', () => {
   });
 });
 
-describe('markRequiredColumn (v0.9 必填 → ✅ / —)', () => {
-  it('maps true→✅ / false→— in the 必填 column, leaving other columns untouched', () => {
+describe('markRequiredColumn (v0.10 必填 → 必填 / —)', () => {
+  it('maps true→必填 / false→— in the 必填 column, leaving other columns untouched', () => {
     const rows = [
       ['名称', '位置', '类型', '必填', '约束', '描述'],
       ['roomNo', 'path', 'string', 'true', '', '房间号'],
@@ -256,11 +256,11 @@ describe('markRequiredColumn (v0.9 必填 → ✅ / —)', () => {
     const out = markRequiredColumn(rows);
     // header preserved verbatim
     expect(out[0]).toEqual(['名称', '位置', '类型', '必填', '约束', '描述']);
-    // 必填 column (idx 3) mapped
-    expect(out[1][3]).toBe('✅');
+    // 必填 column (idx 3) mapped: required → 必填, optional → —
+    expect(out[1][3]).toBe('必填');
     expect(out[2][3]).toBe('—');
     // every other column untouched
-    expect(out[1]).toEqual(['roomNo', 'path', 'string', '✅', '', '房间号']);
+    expect(out[1]).toEqual(['roomNo', 'path', 'string', '必填', '', '房间号']);
     expect(out[2]).toEqual(['limit', 'query', 'integer', '—', '1–100', '条数']);
   });
 
@@ -271,7 +271,7 @@ describe('markRequiredColumn (v0.9 必填 → ✅ / —)', () => {
       ['b', '否', 'y'],
     ];
     const out = markRequiredColumn(rows);
-    expect(out[1][1]).toBe('✅');
+    expect(out[1][1]).toBe('必填');
     expect(out[2][1]).toBe('—');
   });
 
@@ -282,7 +282,7 @@ describe('markRequiredColumn (v0.9 必填 → ✅ / —)', () => {
       ['errCode', 'string', 'false', '', ''],
     ];
     const out = markRequiredColumn(rows);
-    expect(out[1][2]).toBe('✅');
+    expect(out[1][2]).toBe('必填');
     expect(out[2][2]).toBe('—');
   });
 
@@ -309,7 +309,7 @@ describe('markRequiredColumn (v0.9 必填 → ✅ / —)', () => {
 });
 
 describe('markdownToXml — 必填 column markers (end-to-end)', () => {
-  it('renders ✅ for required and — for optional through the transform', () => {
+  it('renders 必填 for required and — for optional through the transform', () => {
     const md = `# T
 
 <h3 id="p">参数</h3>
@@ -321,8 +321,8 @@ describe('markdownToXml — 必填 column markers (end-to-end)', () => {
 `;
     const api = { paths: { '/x': { get: { summary: 's', security: [] } } } };
     const xml = markdownToXml(md, api, 'T');
-    // required → ✅, optional → —
-    expect(xml).toContain('<td>roomNo</td><td>path</td><td>string</td><td>✅</td>');
+    // required → 必填 (the word the post-push styler reddens), optional → —
+    expect(xml).toContain('<td>roomNo</td><td>path</td><td>string</td><td>必填</td>');
     expect(xml).toContain('<td>limit</td><td>query</td><td>integer</td><td>—</td>');
     // no raw true/false leaked in the 必填 cells
     expect(xml).not.toContain('<td>true</td>');
