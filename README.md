@@ -33,7 +33,8 @@ http(s)://.../openapi.json (NEW v1.10) ─┘
 - ✅ **allOf 自动扁平** — BaseResponse + 业务字段不再渲染成 `Inline`，完整字段表 + 自动合成 JSON 响应示例
 - ✅ **鉴权 + 约束 + 请求示例**（v0.4）— 每接口自动输出「鉴权」段（按 operation `security` 翻成中文，如 `需在请求头携带 X-Api-Key: <key>`）、参数表「约束」列回填（min/max/默认/枚举/pattern 等 widdershins 丢掉的校验）、可直接复制的 `### 请求示例` curl
 - ✅ **DocxXML 富排版**（endpoint 模式）— 顶部「📌 速览」callout（METHOD/path · 鉴权 · 用途 · TTL/上限提示）、请求/响应/请求体示例代码块带 caption、**「调用前检查」checkbox 清单（仅 spec 可推导项 ≥2 时）**、轻量 `<hr/>` 分隔各主区块。XML 推送失败自动回退 markdown，绝不阻断同步。（注：Lark 文档导入 API 会剥离 callout/th/span 颜色属性与 `<button>`，故不输出颜色/按钮；callout 结构、pre caption、checkbox 可正常落地）
-- ✅ **必填列醒目**（v0.9）— 所有字段表（参数 / 响应 Schema / 请求体）的「必填」列：必填 → `✅`、可选 → `—`（Lark 导入剥离 text-color，故用 emoji 而非红字）
+- ✅ **真彩色（v0.10，post-push 块着色）** — Lark 文档**导入路径不携带颜色**，但块级属性可在推送后通过 docx 块 API 设置。每个**本次实际推送**的接口文档，推送成功后自动跑一遍块着色：拉取 blocks → 按规则定位文本元素 → 一次 `batch_update` 上色。当前规则：字段表「必填」列的**正文**单元格 → 红字（表头不染）。可插拔规则集，best-effort（失败仅告警、不阻断同步）。调色板：1红/2橙/3黄/4绿/5蓝…15灰
+- ✅ **必填列醒目**（v0.10）— 所有字段表（参数 / 响应 Schema / 请求体）的「必填」列：必填 → 红字「必填」（由块着色 pass 上色）、可选 → `—`
 - ✅ **可读性优化**（v0.7）— 响应 Schema 字段名用**完整点路径**（`data.activities[].activityId`）替代 widdershins 的 `»»»` 标记；POST/PUT/PATCH 接口新增 pretty-print **请求体示例 (JSON)** 并移除 widdershins 的原始 schema dump；单一鉴权方案时不再重复展示「鉴权」段（callout 已含）；移除固定骨架的「调用流程」图
 - ✅ **sync 进度可见**（v0.8）— 显示阶段（`📋 阶段 1/2 规划结构` / `🚀 阶段 2/2 待推送：共 N 个接口`）、规划期滚动计数（`规划中：已对账 k 个节点…`）、每个接口推送带 `[i/N] p%` 进度（`[42/175] 24% ✓ …`），不再像卡死
 - ✅ **缓存纳入工具版本**（v0.6）— sync 跳过缓存的 hash 现含 openapi-lark 自身版本号，渲染层升级后普通 `sync` 自动重推全部接口，无需 `--force`
