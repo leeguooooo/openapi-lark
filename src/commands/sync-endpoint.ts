@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pLimit from 'p-limit';
 import { loadAndDereference, renderApi, RenderError } from '../renderer/index.js';
+import { markdownToXml } from '../renderer/markdown-to-xml.js';
 import { resolveOpenapiPath } from '../config/load.js';
 import {
   splitByEndpoint,
@@ -869,6 +870,29 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
     ctx.showDiff && existsSync(absPath) ? readFileSync(absPath, 'utf8') : null;
   writeFileSync(absPath, markdown, 'utf8');
 
+  // Endpoint mode: also emit a Lark DocxXML variant with four tasteful rich
+  // blocks (顶部速览 callout / 表头底色 / 状态码颜色 / 示例 caption). Any failure
+  // here falls back to the markdown push so sync never breaks.
+  let xmlOutRel: string | null = null;
+  let xmlContent: string | null = null;
+  try {
+    xmlContent = markdownToXml(markdown, api, titleForLock);
+    if (xmlContent && xmlContent.trim()) {
+      const xmlRel = outRel.replace(/\.md$/, '.xml');
+      // Guard against an unexpected non-.md outRel (would otherwise overwrite md).
+      xmlOutRel = xmlRel !== outRel ? xmlRel : `${outRel}.xml`;
+      writeFileSync(resolve(ctx.basedir, xmlOutRel), xmlContent, 'utf8');
+    } else {
+      xmlContent = null;
+    }
+  } catch (err) {
+    process.stderr.write(
+      `[sync] ${label}: XML 生成失败，回退 markdown 推送：${(err as Error).message}\n`,
+    );
+    xmlContent = null;
+    xmlOutRel = null;
+  }
+
   // Hash check: skip push if content unchanged from last successful sync.
   // Uses normalized hash (CRLF / trailing-whitespace insensitive) to dampen
   // cosmetic drift from upstream OpenAPI generators.
@@ -900,26 +924,45 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
     };
   }
   if (ctx.dryRun) {
-    // Skip push + lockUpsert. Local md already written above.
+    // Skip push + lockUpsert. Local md (+ xml) already written above.
+    const fmtNote = xmlOutRel ? ` (XML: ${resolve(ctx.basedir, xmlOutRel)})` : ' (markdown)';
     return {
       service: label,
       status: 'ok',
       durationMs: Date.now() - started,
-      reason: `(dry-run) wrote ${absPath}; would push ${(bytes / 1024).toFixed(1)} KB`,
+      reason: `(dry-run) wrote ${absPath}${fmtNote}; would push ${(bytes / 1024).toFixed(1)} KB`,
     };
   }
-  const pushed = push({
+  // Prefer the rich XML push; fall back to markdown if XML wasn't produced.
+  let pushed = push({
     docToken,
-    mdPath: outRel,
+    mdPath: xmlOutRel ?? outRel,
+    docFormat: xmlOutRel ? 'xml' : 'markdown',
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
     // Always lock the wiki node + docx title to the spec-derived value.
     // Without --new-title, lark-cli's `--command overwrite` picks an H1 from
-    // the markdown body as the title; recycled nodes whose old title drifted
-    // would keep the stale title in the wiki sidebar.
+    // the body as the title; recycled nodes whose old title drifted would
+    // keep the stale title in the wiki sidebar.
     newTitle: titleForLock,
   });
+  // Robust fallback: if the XML push failed (e.g. lark-cli rejected a block),
+  // retry once with the plain markdown so sync never breaks on a format edge case.
+  if (!pushed.ok && xmlOutRel) {
+    process.stderr.write(
+      `[sync] ${label}: XML 推送失败（${pushed.reason}），回退 markdown 重试\n`,
+    );
+    pushed = push({
+      docToken,
+      mdPath: outRel,
+      docFormat: 'markdown',
+      cwd: ctx.basedir,
+      larkBin: ctx.config.larkBin,
+      timeoutMs: ctx.timeoutMs,
+      newTitle: titleForLock,
+    });
+  }
   if (pushed.ok) {
     // Record successful push in lockfile
     lockUpsert(ctx.lock, ctx.service.name, docToken, {
