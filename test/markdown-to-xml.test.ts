@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   escapeXmlText,
   inlineToXml,
-  statusColor,
   buildOverviewCallout,
   markdownToXml,
 } from '../src/renderer/markdown-to-xml.js';
@@ -31,18 +30,6 @@ describe('inlineToXml', () => {
   });
 });
 
-describe('statusColor', () => {
-  it('maps status classes', () => {
-    expect(statusColor('200')).toBe('green');
-    expect(statusColor('204')).toBe('green');
-    expect(statusColor('301')).toBe('blue');
-    expect(statusColor('400')).toBe('orange');
-    expect(statusColor('404')).toBe('orange');
-    expect(statusColor('500')).toBe('red');
-    expect(statusColor('xyz')).toBeNull();
-  });
-});
-
 const apiSlice = {
   servers: [{ url: 'https://api.example.com' }],
   components: {
@@ -68,7 +55,10 @@ const apiSlice = {
 describe('buildOverviewCallout', () => {
   it('builds a compact callout with METHOD/path, 鉴权, 用途, note', () => {
     const c = buildOverviewCallout(apiSlice);
-    expect(c).toContain('<callout emoji="📌" background-color="light-blue">');
+    // v0.5.1: callout keeps structure + emoji but NO background-color (Lark
+    // strips color attributes on docx import).
+    expect(c).toContain('<callout emoji="📌">');
+    expect(c).not.toContain('background-color');
     expect(c).toContain('<b>GET /api/admin/voice-room/{roomNo}/presence-records</b>');
     expect(c).toContain('🔑 鉴权：需在请求头携带 <code>X-Api-Key: &lt;key&gt;</code>');
     expect(c).toContain('🎯 用途：查询房间用户进出记录（管理端）');
@@ -148,19 +138,25 @@ curl 'https://api.example.com/x?a=1&b=2' \\
     expect(cIdx).toBeLessThan(xml.indexOf('<h3>'));
   });
 
-  it('gives table headers a light-gray background', () => {
+  it('emits PLAIN table headers (no background-color — Lark strips it)', () => {
     const xml = markdownToXml(md, apiSlice, title);
-    expect(xml).toContain('<th background-color="light-gray">名称</th>');
-    expect(xml).toContain('<th background-color="light-gray">状态码</th>');
+    expect(xml).toContain('<th>名称</th>');
+    expect(xml).toContain('<th>状态码</th>');
+    expect(xml).not.toContain('<th background-color');
   });
 
-  it('colors status codes by class', () => {
+  it('emits status codes as plain text (no text-color span — Lark strips it)', () => {
     const xml = markdownToXml(md, apiSlice, title);
-    expect(xml).toContain('<span text-color="green">200</span>');
-    expect(xml).toContain('<span text-color="orange">400</span>');
-    expect(xml).toContain('<span text-color="red">500</span>');
-    // non-status table (params) must NOT color its first column
-    expect(xml).not.toContain('<span text-color="green">limit</span>');
+    expect(xml).toContain('<td>200</td>');
+    expect(xml).toContain('<td>400</td>');
+    expect(xml).toContain('<td>500</td>');
+    expect(xml).not.toContain('text-color');
+  });
+
+  it('emits NO color attributes anywhere (locks in v0.5.1 cleanup)', () => {
+    const xml = markdownToXml(md, apiSlice, title);
+    expect(xml).not.toContain('background-color');
+    expect(xml).not.toContain('text-color');
   });
 
   it('adds captions to the example code blocks', () => {
