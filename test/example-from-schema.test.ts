@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   generateExample,
   exampleForOperation,
+  requestBodyExampleForOperation,
 } from '../src/renderer/example-from-schema.js';
 
 describe('generateExample', () => {
@@ -125,5 +126,33 @@ describe('exampleForOperation', () => {
       responses: { '200': { description: 'no body' } },
     };
     expect(exampleForOperation(op)).toBeNull();
+  });
+});
+
+describe('requestBodyExampleForOperation (v0.7)', () => {
+  it('synthesizes a JSON example from the requestBody schema', () => {
+    const op = {
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                familyId: { type: 'string', example: 'family_001' },
+                status: { type: 'string', enum: ['normal', 'all'] },
+                page: { type: 'integer', default: 1 },
+              },
+            },
+          },
+        },
+      },
+    };
+    const r = requestBodyExampleForOperation(op);
+    expect(r?.example).toEqual({ familyId: 'family_001', status: 'normal', page: 1 });
+  });
+
+  it('returns null for a GET / no-requestBody operation', () => {
+    expect(requestBodyExampleForOperation({ responses: {} })).toBeNull();
+    expect(requestBodyExampleForOperation({ requestBody: { content: {} } })).toBeNull();
   });
 });

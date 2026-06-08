@@ -5,7 +5,7 @@ import { postProcess } from '../post-process.js';
 import { detectHeadingJumps, type HeadingWarning } from '../heading-check.js';
 import { exampleForOperation } from '../example-from-schema.js';
 import { injectSecuritySection } from '../security-section.js';
-import { injectRequestExample } from '../request-example.js';
+import { injectRequestExample, injectRequestBodyExample } from '../request-example.js';
 
 // Silence the doT template engine's compile-time chatter (widdershins emits
 // 24+ lines of "Loaded def authentication.def" / "Compiling code_csharp.dot"
@@ -98,6 +98,9 @@ export async function renderWiddershins(input: RenderInput): Promise<RenderOutpu
     md = injectSecuritySection(md, input.api);
     md = appendResponseExample(md, input.api);
     md = injectRequestExample(md, input.api);
+    // v0.7: pretty-printed 请求体示例 (JSON) for requestBody endpoints; inserts
+    // before the 请求示例 curl. Skips GET/DELETE / no-requestBody.
+    md = injectRequestBodyExample(md, input.api);
   }
   const headingWarnings = detectHeadingJumps(md);
   return { markdown: md, headingWarnings };

@@ -10,7 +10,7 @@
  * Mirrors example-from-schema.ts for value synthesis.
  */
 
-import { generateExample } from './example-from-schema.js';
+import { generateExample, requestBodyExampleForOperation } from './example-from-schema.js';
 
 function isObj(x: unknown): x is Record<string, any> {
   return x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -174,6 +174,44 @@ export function injectRequestExample(md: string, api: any): string {
   const idx = md.indexOf('### 响应示例');
   if (idx >= 0) {
     return md.slice(0, idx) + block.trimStart() + '\n' + md.slice(idx);
+  }
+  return md.trimEnd() + '\n' + block;
+}
+
+/**
+ * Insert a pretty-printed 「请求体示例」 (JSON) block for endpoints with a JSON
+ * requestBody (POST/PUT/PATCH). It's the readable form of what the curl `-d`
+ * carries cramped on one line. Placed just before the 请求示例 (curl) block, or
+ * before 响应示例, else appended. Skips GET/DELETE / no-requestBody endpoints.
+ */
+export function injectRequestBodyExample(md: string, api: any): string {
+  const paths = isObj(api?.paths) ? api.paths : {};
+  const HTTP = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
+  let op: any = null;
+  for (const pathItem of Object.values(paths)) {
+    if (!isObj(pathItem)) continue;
+    for (const [method, o] of Object.entries(pathItem as Record<string, any>)) {
+      if (!HTTP.has(method.toLowerCase())) continue;
+      if (isObj(o)) {
+        op = o;
+        break;
+      }
+    }
+    if (op) break;
+  }
+  if (!op) return md;
+
+  const bodyEx = requestBodyExampleForOperation(op);
+  if (!bodyEx) return md; // no JSON requestBody → skip entirely
+  const json = JSON.stringify(bodyEx.example, null, 2);
+  const block = `\n### 请求体示例\n\n\`\`\`json\n${json}\n\`\`\`\n`;
+
+  // Prefer inserting before the 请求示例 (curl) block; else before 响应示例; else append.
+  for (const marker of ['### 请求示例', '### 响应示例']) {
+    const idx = md.indexOf(marker);
+    if (idx >= 0) {
+      return md.slice(0, idx) + block.trimStart() + '\n' + md.slice(idx);
+    }
   }
   return md.trimEnd() + '\n' + block;
 }

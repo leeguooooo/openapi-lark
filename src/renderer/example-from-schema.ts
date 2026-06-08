@@ -38,6 +38,17 @@ export function generateExample(schema: any, seen: WeakSet<object> = new WeakSet
   if (schema.example !== undefined) return schema.example;
   if (Array.isArray(schema.examples) && schema.examples.length > 0) return schema.examples[0];
   if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  // `default` is a meaningful concrete value (esp. for request bodies) — prefer
+  // it over a generic type default. Skip for objects/arrays (let recursion build
+  // a representative shape rather than echoing a possibly-empty default).
+  if (
+    schema.default !== undefined &&
+    schema.type !== 'object' &&
+    schema.type !== 'array' &&
+    schema.properties === undefined
+  ) {
+    return schema.default;
+  }
 
   const type = schema.type;
   const fmt: string | undefined = typeof schema.format === 'string' ? schema.format : undefined;
@@ -95,4 +106,17 @@ export function exampleForOperation(op: any): { status: string; example: unknown
     }
   }
   return null;
+}
+
+/**
+ * Synthesize a JSON example for an operation's requestBody (application/json).
+ * Returns null for GET/DELETE / operations without a JSON requestBody schema.
+ * Mirrors exampleForOperation but for the request side.
+ */
+export function requestBodyExampleForOperation(op: any): { example: unknown } | null {
+  const schema = op?.requestBody?.content?.['application/json']?.schema;
+  if (!isObj(schema)) return null;
+  const ex = generateExample(schema);
+  if (ex === null || ex === undefined) return null;
+  return { example: ex };
 }

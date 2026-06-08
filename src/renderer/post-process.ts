@@ -220,6 +220,16 @@ export function stripWiddershinsBoilerplate(md: string): string {
     /^>\s*\d{3}\s+Response\s*$\n+```[a-zA-Z0-9]*\n[\s\S]*?\n```\s*$/gm,
     '',
   );
+  // "> Body parameter" callout + the JSON code block that follows. For a POST/
+  // PUT/PATCH requestBody, widdershins dumps the raw JSON-SCHEMA (type/required/
+  // properties …), not an example — verbose and confusing. The body fields are
+  // already in the 参数 table (body-location rows) and we synthesize a clean
+  // 请求体示例 + curl elsewhere, so remove the schema dump. Match
+  // `> Body parameter\n\n```json … ```` (any code fence lang).
+  out = out.replace(
+    /^>\s*Body parameter\s*$\n+```[a-zA-Z0-9]*\n[\s\S]*?\n```\s*$/gm,
+    '',
+  );
   return out;
 }
 
@@ -378,7 +388,10 @@ export function localizeHeadings(md: string): string {
   // Section vocab — same translation applies to both markdown and HTML headings
   const VOCAB: Array<[string, string]> = [
     ['Parameters', '参数'],
-    ['Body parameter', '请求体示例'],
+    // NOTE: widdershins emits "Body parameter" as a `> ` blockquote (not a
+    // heading) followed by a raw JSON-Schema dump — both are stripped in
+    // stripWiddershinsBoilerplate. We synthesize a clean `请求体示例` block
+    // ourselves, so there's no English "Body parameter" heading to localize here.
     ['Responses', '响应'],
     ['Response Schema', '响应 Schema'],
     ['Response Headers', '响应头'],

@@ -163,6 +163,28 @@ body`;
     expect(out).toContain('body');
   });
 
+  it('removes "> Body parameter" callout + following JSON-Schema dump (v0.7)', () => {
+    const md = `body
+
+> Body parameter
+
+\`\`\`json
+{
+  "type": "object",
+  "required": ["familyId"],
+  "properties": { "familyId": { "type": "string" } }
+}
+\`\`\`
+
+### 参数`;
+    const out = stripWiddershinsBoilerplate(md);
+    expect(out).not.toContain('Body parameter');
+    expect(out).not.toContain('"properties"');
+    expect(out).not.toContain('"required"');
+    expect(out).toContain('### 参数');
+    expect(out).toContain('body');
+  });
+
   it('removes widdershins auto method__path operation heading (no operationId)', () => {
     const md = `## OTP（applegame）
 
