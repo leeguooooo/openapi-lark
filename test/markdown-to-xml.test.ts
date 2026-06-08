@@ -3,9 +3,9 @@ import {
   escapeXmlText,
   inlineToXml,
   buildOverviewCallout,
-  buildCallFlow,
   buildPreCallChecklist,
   detectPagination,
+  dottifySchemaRows,
   markdownToXml,
 } from '../src/renderer/markdown-to-xml.js';
 
@@ -197,34 +197,50 @@ describe('detectPagination', () => {
   });
 });
 
-describe('buildCallFlow (mermaid whiteboard)', () => {
-  it('emits a whiteboard with the actual required params + pagination loop', () => {
-    const xml = buildCallFlow(paginatedApi);
-    expect(xml).toContain('<h2>调用流程</h2>');
-    expect(xml).toContain('<whiteboard type="mermaid">');
-    expect(xml).toContain('graph TD');
-    // resolved auth step
-    expect(xml).toContain('携带 X-Api-Key');
-    // actual required param names
-    expect(xml).toContain('roomNo / startTime / endTime');
-    // optional filter branch from the enum param
-    expect(xml).toContain('activityType');
-    // pagination decision node + nextCursor loop
-    expect(xml).toContain('hasMore = true?');
-    expect(xml).toContain('nextCursor');
-    // mermaid arrows + decision braces are escaped per Lark rules but structurally present
-    expect(xml).toContain('--&gt;');
-    expect(xml).toContain('|是|');
-    expect(xml).toContain('|否|');
-    expect(xml).toContain('</whiteboard>');
+describe('dottifySchemaRows (v0.7 »→dotted path)', () => {
+  // Schema table header + rows with widdershins `»` depth markers. The 类型 column
+  // shows `[object]`/`[xxx]` for arrays.
+  const header = ['名称', '类型', '必填', '约束', '描述'];
+  const rows = [
+    header,
+    ['» success', 'boolean', 'true', '', ''],
+    ['» data', 'object', 'false', '', ''],
+    ['»» activities', '[object]', 'false', '', ''],
+    ['»»» activityId', 'string', 'false', '', ''],
+    ['»»» seatNumber', 'integer¦null', 'false', '', ''],
+    ['»» pagination', 'object', 'false', '', ''],
+    ['»»» hasMore', 'boolean', 'false', '', ''],
+    ['»»» nextCursor', 'string¦null', 'false', '', ''],
+  ];
+
+  it('reconstructs fully-qualified dotted paths with [] on array-of-object parents', () => {
+    const out = dottifySchemaRows(rows);
+    const names = out.slice(1).map((r) => r[0]);
+    expect(names).toEqual([
+      'success',
+      'data',
+      'data.activities[]',
+      'data.activities[].activityId',
+      'data.activities[].seatNumber',
+      'data.pagination',
+      'data.pagination.hasMore',
+      'data.pagination.nextCursor',
+    ]);
+    // no » markers remain
+    expect(JSON.stringify(out)).not.toContain('»');
   });
 
-  it('emits NOTHING for a non-paginated endpoint (no 2-box noise)', () => {
-    expect(buildCallFlow(nonPaginatedApi)).toBe('');
+  it('leaves non-schema tables (no 名称 header) untouched', () => {
+    const other = [
+      ['参数', '取值'],
+      ['» status', 'normal'],
+    ];
+    expect(dottifySchemaRows(other)).toEqual(other);
   });
 
-  it('returns empty when no operation', () => {
-    expect(buildCallFlow({ paths: {} })).toBe('');
+  it('is a no-op when there are no » markers', () => {
+    const flat = [header, ['plainField', 'string', 'true', '', 'x']];
+    expect(dottifySchemaRows(flat)).toEqual(flat);
   });
 });
 
@@ -344,9 +360,8 @@ curl 'https://api.example.com/x?a=1&b=2' \\
     expect(xml).toContain("X-Api-Key: &lt;key&gt;");
   });
 
-  it('converts md and html headings', () => {
+  it('converts md and html headings (鉴权 dropped for single-scheme — see dedup test)', () => {
     const xml = markdownToXml(md, apiSlice, title);
-    expect(xml).toContain('<h3>鉴权</h3>');
     expect(xml).toContain('<h3>参数</h3>');
   });
 
@@ -355,9 +370,24 @@ curl 'https://api.example.com/x?a=1&b=2' \\
     expect(xml).not.toMatch(/^\|/m);
     expect(xml).not.toContain('```');
   });
+
+  it('v0.7: drops the standalone ### 鉴权 section for single-scheme (callout covers it)', () => {
+    const xml = markdownToXml(md, apiSlice, title);
+    // exactly one auth mention — the callout's 🔑 line
+    expect(xml).toContain('🔑 鉴权：');
+    expect(xml).not.toContain('<h3>鉴权</h3>');
+    expect((xml.match(/鉴权/g) || []).length).toBe(1);
+  });
+
+  it('v0.7: light <hr/> separators between top-level sections', () => {
+    const xml = markdownToXml(md, apiSlice, title);
+    // sections after the first (参数) get an <hr/> before them: 响应 / 请求示例 / 响应示例
+    expect(xml).toContain('<hr/>');
+    expect(xml.split('<hr/>').length - 1).toBeGreaterThanOrEqual(2);
+  });
 });
 
-describe('markdownToXml — v0.6 conditional blocks (end-to-end placement)', () => {
+describe('markdownToXml — v0.7 (no whiteboard, checklist at end, dotted schema)', () => {
   const md = `# T
 
 \`GET /api/admin/voice-room/{roomNo}/presence-records\`
@@ -374,6 +404,14 @@ describe('markdownToXml — v0.6 conditional blocks (end-to-end placement)', () 
 |---|---|
 |200|OK|
 
+### 响应 Schema
+
+| 名称 | 类型 | 必填 | 约束 | 描述 |
+|---|---|---|---|---|
+|» data|object|false| | |
+|»» activities|[object]|false| | |
+|»»» activityId|string|false| | |
+
 ### 请求示例
 
 \`\`\`bash
@@ -382,33 +420,94 @@ curl x
 `;
   const title = '查询房间用户进出记录（管理端） — GET /presence-records';
 
-  it('injects 调用流程 between 参数 and 响应, and 调用前检查 at the end (paginated)', () => {
+  it('emits NO 调用流程 whiteboard (removed in v0.7), checklist at the very end', () => {
     const xml = markdownToXml(md, paginatedApi, title);
-    const paramIdx = xml.indexOf('参数');
-    const flowIdx = xml.indexOf('<h2>调用流程</h2>');
-    const respIdx = xml.indexOf('<h3>响应</h3>');
+    expect(xml).not.toContain('<whiteboard');
+    expect(xml).not.toContain('调用流程');
     const checklistIdx = xml.indexOf('<h2>调用前检查</h2>');
-    expect(flowIdx).toBeGreaterThan(-1);
     expect(checklistIdx).toBeGreaterThan(-1);
-    // 参数 < 调用流程 < 响应
-    expect(paramIdx).toBeLessThan(flowIdx);
-    expect(flowIdx).toBeLessThan(respIdx);
-    // 调用前检查 is last
-    expect(checklistIdx).toBeGreaterThan(respIdx);
-    expect(checklistIdx).toBe(Math.max(flowIdx, respIdx, checklistIdx));
-    // whiteboard + checkbox survive the transform; still no color attrs
-    expect(xml).toContain('<whiteboard type="mermaid">');
+    // checklist is the last major block
+    expect(checklistIdx).toBeGreaterThan(xml.indexOf('<h3>响应</h3>'));
     expect(xml).toContain('<checkbox done="false">');
-    expect(xml).not.toContain('background-color');
-    expect(xml).not.toContain('text-color');
   });
 
-  it('emits NO whiteboard for a non-paginated endpoint, and no/short checklist', () => {
+  it('rewrites response-Schema field names to dotted paths through the transform', () => {
+    const xml = markdownToXml(md, paginatedApi, title);
+    expect(xml).toContain('<td>data.activities[]</td>');
+    expect(xml).toContain('<td>data.activities[].activityId</td>');
+    expect(xml).not.toContain('»');
+  });
+
+  it('emits NO checklist for a <2-item endpoint', () => {
     const xml = markdownToXml(md, nonPaginatedApi, title);
-    expect(xml).not.toContain('<whiteboard');
-    expect(xml).not.toContain('<h2>调用流程</h2>');
-    // create endpoint has <2 derivable checklist items → no checklist either
     expect(xml).not.toContain('<h2>调用前检查</h2>');
+  });
+});
+
+describe('markdownToXml — v0.7 鉴权 dedup (single vs multi scheme)', () => {
+  const mdWithAuth = `# T
+
+\`POST /x\`
+
+### 鉴权
+
+以下任一方式均可：
+- 需在请求头携带 \`X-Api-Key: <key>\`
+- 需在 \`Authorization: Bearer <token>\` 头携带令牌
+
+<h3 id="p">参数</h3>
+
+| 名称 | 位置 |
+|---|---|
+|a|query|
+`;
+
+  const multiSchemeApi = {
+    components: {
+      securitySchemes: {
+        ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-Api-Key' },
+        BearerAuth: { type: 'http', scheme: 'bearer' },
+      },
+    },
+    paths: {
+      '/x': {
+        post: {
+          summary: 'multi',
+          security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
+          parameters: [{ name: 'a', in: 'query' }],
+        },
+      },
+    },
+  };
+
+  it('KEEPS the standalone 鉴权 section when there are ≥2 OR-options', () => {
+    const xml = markdownToXml(mdWithAuth, multiSchemeApi, 'T');
+    expect(xml).toContain('<h3>鉴权</h3>');
+    expect(xml).toContain('以下任一方式均可');
+  });
+
+  it('DROPS the standalone 鉴权 section for a single scheme', () => {
+    const singleMd = `# T
+
+\`POST /x\`
+
+### 鉴权
+
+需在请求头携带 \`X-Api-Key: <key>\`。
+
+<h3 id="p">参数</h3>
+
+| 名称 | 位置 |
+|---|---|
+|a|query|
+`;
+    const singleApi = {
+      components: { securitySchemes: { ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-Api-Key' } } },
+      paths: { '/x': { post: { summary: 's', security: [{ ApiKeyAuth: [] }], parameters: [{ name: 'a', in: 'query' }] } } },
+    };
+    const xml = markdownToXml(singleMd, singleApi, 'T');
+    expect(xml).not.toContain('<h3>鉴权</h3>');
+    expect(xml).toContain('🔑 鉴权：'); // callout still carries it
   });
 });
 
