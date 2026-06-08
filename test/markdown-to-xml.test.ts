@@ -3,6 +3,9 @@ import {
   escapeXmlText,
   inlineToXml,
   buildOverviewCallout,
+  buildCallFlow,
+  buildPreCallChecklist,
+  detectPagination,
   markdownToXml,
 } from '../src/renderer/markdown-to-xml.js';
 
@@ -76,6 +79,176 @@ describe('buildOverviewCallout', () => {
     });
     expect(c).toContain('🎯 用途：简单接口');
     expect(c).not.toContain('⚠️ 注意');
+  });
+});
+
+// A paginated endpoint (cursor + hasMore + pagination response fields), shaped
+// like the real presence-records slice after allOf-flatten.
+const paginatedApi = {
+  components: {
+    securitySchemes: { ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'X-Api-Key' } },
+  },
+  paths: {
+    '/api/admin/voice-room/{roomNo}/presence-records': {
+      get: {
+        operationId: 'getPresence',
+        summary: '查询房间用户进出记录（管理端）',
+        security: [{ ApiKeyAuth: [] }],
+        parameters: [
+          { name: 'roomNo', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'startTime', in: 'query', required: true, schema: { type: 'integer' } },
+          { name: 'endTime', in: 'query', required: true, schema: { type: 'integer' } },
+          {
+            name: 'activityType',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', enum: ['USER_JOINED', 'USER_LEFT', 'USER_KICKED'] },
+          },
+          { name: 'cursor', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer' } },
+        ],
+        responses: {
+          '200': {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    data: {
+                      type: 'object',
+                      properties: {
+                        activities: { type: 'array', items: { type: 'object' } },
+                        pagination: {
+                          type: 'object',
+                          properties: {
+                            hasMore: { type: 'boolean' },
+                            nextCursor: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+// A simple non-paginated POST create endpoint.
+const nonPaginatedApi = {
+  components: {
+    securitySchemes: { BearerAuth: { type: 'http', scheme: 'bearer' } },
+  },
+  security: [{ BearerAuth: [] }],
+  paths: {
+    '/api/voice-room/create': {
+      post: {
+        operationId: 'createRoom',
+        summary: '创建语音房',
+        parameters: [{ name: 'Language', in: 'header', required: false, schema: { type: 'string' } }],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { name: { type: 'string' } } },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { data: { type: 'object' } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+describe('detectPagination', () => {
+  it('detects cursor + hasMore + pagination signals', () => {
+    const op = paginatedApi.paths['/api/admin/voice-room/{roomNo}/presence-records'].get;
+    const pg = detectPagination(op);
+    expect(pg.paginated).toBe(true);
+    expect(pg.hasCursor).toBe(true);
+    expect(pg.hasMore).toBe(true);
+  });
+
+  it('detects limit + offset as pagination', () => {
+    const op = {
+      parameters: [
+        { name: 'limit', in: 'query' },
+        { name: 'offset', in: 'query' },
+      ],
+      responses: {},
+    };
+    expect(detectPagination(op).paginated).toBe(true);
+  });
+
+  it('is NOT paginated for a simple create endpoint', () => {
+    const op = nonPaginatedApi.paths['/api/voice-room/create'].post;
+    expect(detectPagination(op).paginated).toBe(false);
+  });
+});
+
+describe('buildCallFlow (mermaid whiteboard)', () => {
+  it('emits a whiteboard with the actual required params + pagination loop', () => {
+    const xml = buildCallFlow(paginatedApi);
+    expect(xml).toContain('<h2>调用流程</h2>');
+    expect(xml).toContain('<whiteboard type="mermaid">');
+    expect(xml).toContain('graph TD');
+    // resolved auth step
+    expect(xml).toContain('携带 X-Api-Key');
+    // actual required param names
+    expect(xml).toContain('roomNo / startTime / endTime');
+    // optional filter branch from the enum param
+    expect(xml).toContain('activityType');
+    // pagination decision node + nextCursor loop
+    expect(xml).toContain('hasMore = true?');
+    expect(xml).toContain('nextCursor');
+    // mermaid arrows + decision braces are escaped per Lark rules but structurally present
+    expect(xml).toContain('--&gt;');
+    expect(xml).toContain('|是|');
+    expect(xml).toContain('|否|');
+    expect(xml).toContain('</whiteboard>');
+  });
+
+  it('emits NOTHING for a non-paginated endpoint (no 2-box noise)', () => {
+    expect(buildCallFlow(nonPaginatedApi)).toBe('');
+  });
+
+  it('returns empty when no operation', () => {
+    expect(buildCallFlow({ paths: {} })).toBe('');
+  });
+});
+
+describe('buildPreCallChecklist', () => {
+  it('emits ≥2 spec-derived checkbox items', () => {
+    const xml = buildPreCallChecklist(paginatedApi);
+    expect(xml).toContain('<h2>调用前检查</h2>');
+    expect(xml).toContain('<checkbox done="false">已配置鉴权：');
+    expect(xml).toContain('<checkbox done="false">必填参数已传：roomNo、startTime、endTime</checkbox>');
+    expect(xml).toContain('<checkbox done="false">分页：hasMore=true 时用 nextCursor 继续拉取</checkbox>');
+    // max 4, all checkboxes
+    const count = (xml.match(/<checkbox /g) || []).length;
+    expect(count).toBeGreaterThanOrEqual(2);
+    expect(count).toBeLessThanOrEqual(4);
+  });
+
+  it('skips the whole section when <2 items apply', () => {
+    // create endpoint: auth (global bearer) is 1 item; Language not required; not
+    // paginated → only 1 item → section skipped.
+    expect(buildPreCallChecklist(nonPaginatedApi)).toBe('');
+  });
+
+  it('returns empty when no operation', () => {
+    expect(buildPreCallChecklist({ paths: {} })).toBe('');
   });
 });
 
@@ -181,6 +354,61 @@ curl 'https://api.example.com/x?a=1&b=2' \\
     const xml = markdownToXml(md, apiSlice, title);
     expect(xml).not.toMatch(/^\|/m);
     expect(xml).not.toContain('```');
+  });
+});
+
+describe('markdownToXml — v0.6 conditional blocks (end-to-end placement)', () => {
+  const md = `# T
+
+\`GET /api/admin/voice-room/{roomNo}/presence-records\`
+
+<h3 id="x">参数</h3>
+
+| 名称 | 位置 |
+|---|---|
+|roomNo|path|
+
+### 响应
+
+| 状态码 | 含义 |
+|---|---|
+|200|OK|
+
+### 请求示例
+
+\`\`\`bash
+curl x
+\`\`\`
+`;
+  const title = '查询房间用户进出记录（管理端） — GET /presence-records';
+
+  it('injects 调用流程 between 参数 and 响应, and 调用前检查 at the end (paginated)', () => {
+    const xml = markdownToXml(md, paginatedApi, title);
+    const paramIdx = xml.indexOf('参数');
+    const flowIdx = xml.indexOf('<h2>调用流程</h2>');
+    const respIdx = xml.indexOf('<h3>响应</h3>');
+    const checklistIdx = xml.indexOf('<h2>调用前检查</h2>');
+    expect(flowIdx).toBeGreaterThan(-1);
+    expect(checklistIdx).toBeGreaterThan(-1);
+    // 参数 < 调用流程 < 响应
+    expect(paramIdx).toBeLessThan(flowIdx);
+    expect(flowIdx).toBeLessThan(respIdx);
+    // 调用前检查 is last
+    expect(checklistIdx).toBeGreaterThan(respIdx);
+    expect(checklistIdx).toBe(Math.max(flowIdx, respIdx, checklistIdx));
+    // whiteboard + checkbox survive the transform; still no color attrs
+    expect(xml).toContain('<whiteboard type="mermaid">');
+    expect(xml).toContain('<checkbox done="false">');
+    expect(xml).not.toContain('background-color');
+    expect(xml).not.toContain('text-color');
+  });
+
+  it('emits NO whiteboard for a non-paginated endpoint, and no/short checklist', () => {
+    const xml = markdownToXml(md, nonPaginatedApi, title);
+    expect(xml).not.toContain('<whiteboard');
+    expect(xml).not.toContain('<h2>调用流程</h2>');
+    // create endpoint has <2 derivable checklist items → no checklist either
+    expect(xml).not.toContain('<h2>调用前检查</h2>');
   });
 });
 

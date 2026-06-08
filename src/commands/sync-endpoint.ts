@@ -870,8 +870,9 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
     ctx.showDiff && existsSync(absPath) ? readFileSync(absPath, 'utf8') : null;
   writeFileSync(absPath, markdown, 'utf8');
 
-  // Endpoint mode: also emit a Lark DocxXML variant with four tasteful rich
-  // blocks (顶部速览 callout / 表头底色 / 状态码颜色 / 示例 caption). Any failure
+  // Endpoint mode: also emit a Lark DocxXML variant with the tasteful rich
+  // blocks that survive Lark's docx import (顶部速览 callout / 示例 caption /
+  // 调用流程 mermaid for paginated endpoints / 调用前检查 checkbox). Any failure
   // here falls back to the markdown push so sync never breaks.
   let xmlOutRel: string | null = null;
   let xmlContent: string | null = null;
