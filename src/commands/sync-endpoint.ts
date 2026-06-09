@@ -865,7 +865,7 @@ async function pushEndpointLeaf(args: {
   // Cascade: node-map → identity-extracted-from-title → legacy full-title.
   // This survives a summary change ("预测" → "创建预测（下注）") because the
   // identity (POST /api/v1/predicts) stays the same; the old wiki node is
-  // recycled and renamed via --new-title on push.
+  // recycled and re-titled via the first H1 in the pushed content.
   const knownLeafNode = getLeafNode(ctx.nodeMap, svcName, identity);
   let leaf = popByCascade(pool, {
     nodeToken: knownLeafNode,
@@ -889,7 +889,7 @@ async function pushEndpointLeaf(args: {
     }
   } else if (leaf.title !== leafTitle) {
     // We recycled an existing node whose title drifted (summary change).
-    // renderAndPush will pass `newTitle: leafTitle` to lark-cli below.
+    // renderAndPush re-titles it via the first H1 it locks into the content.
     process.stdout.write(
       `[sync] ${svcName}: ${ctx.dryRun ? '(would) rename' : 'renaming'} leaf node ${leaf.nodeToken} ` +
         `(was "${leaf.title}") -> "${leafTitle}" [identity=${identity}]\n`,
@@ -1034,11 +1034,9 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
-    // Always lock the wiki node + docx title to the spec-derived value.
-    // Without --new-title, lark-cli's `--command overwrite` picks an H1 from
-    // the body as the title; recycled nodes whose old title drifted would
-    // keep the stale title in the wiki sidebar.
-    newTitle: titleForLock,
+    // Title is locked into the content above (lockTitleInMarkdown /
+    // markdownToXml). lark-cli v2 takes the title from the first H1 in
+    // --content and rejected the old --new-title flag, so we no longer pass it.
   });
   // Robust fallback: if the XML push failed (e.g. lark-cli rejected a block),
   // retry once with the plain markdown so sync never breaks on a format edge case.
@@ -1053,7 +1051,7 @@ async function renderAndPush(args: RAPArgs): Promise<ServiceResult> {
       cwd: ctx.basedir,
       larkBin: ctx.config.larkBin,
       timeoutMs: ctx.timeoutMs,
-      newTitle: titleForLock,
+      // Title locked into --content (markdown H1); no --new-title in v2.
     });
   }
   if (pushed.ok) {
@@ -1174,11 +1172,9 @@ async function pushPrebuilt(args: PushPrebuiltArgs): Promise<ServiceResult> {
     cwd: ctx.basedir,
     larkBin: ctx.config.larkBin,
     timeoutMs: ctx.timeoutMs,
-    // Always lock the wiki node + docx title to the spec-derived value.
-    // Without --new-title, lark-cli's `--command overwrite` picks an H1 from
-    // the markdown body as the title; recycled nodes whose old title drifted
-    // would keep the stale title in the wiki sidebar.
-    newTitle: titleForLock,
+    // Title is locked into the markdown above (lockTitleInMarkdown). lark-cli
+    // v2 takes the title from the first H1 in --content; the old --new-title
+    // flag was removed and is no longer passed.
   });
   if (pushed.ok) {
     lockUpsert(ctx.lock, ctx.service.name, docToken, {

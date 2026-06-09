@@ -21,9 +21,16 @@ export interface PushInput {
   cwd?: string;
   larkBin?: string;
   timeoutMs: number;
-  /** If set, pass --new-title to lock the docx + wiki node title.
-   *  Without this, `--command overwrite` mode steals the title from one of the
-   *  H1s in the markdown body (observed in lark-cli 1.0.32). */
+  /**
+   * @deprecated No longer emitted. lark-cli v2 (≥1.0.49) REMOVED the v1
+   * `--new-title` flag and now rejects it with a validation error
+   * ("docs +update is v2-only … legacy v1 flag(s) --new-title are no longer
+   * supported; --new-title -> update the title through XML content in
+   * --content"). The title is instead taken from the FIRST H1 in the
+   * `--content` payload, which callers lock in via `lockTitleInMarkdown`
+   * (markdown) / `markdownToXml(..., title)` (xml). Field retained only so
+   * existing callers keep compiling; it is intentionally ignored.
+   */
   newTitle?: string;
   /** Pass-through for testing — override process.env */
   env?: NodeJS.ProcessEnv;
@@ -103,9 +110,10 @@ export function push(input: PushInput): PushResult {
     '--content',
     `@${input.mdPath}`,
   ];
-  if (input.newTitle) {
-    args.push('--new-title', input.newTitle);
-  }
+  // NOTE: we deliberately do NOT pass `--new-title`. lark-cli v2 (≥1.0.49)
+  // removed that v1 flag and rejects it outright. The title now comes from the
+  // first H1 in --content, which callers inject via lockTitleInMarkdown /
+  // markdownToXml. `input.newTitle` is accepted for back-compat but ignored.
   const spawnOpts = {
     encoding: 'utf8' as const,
     env: input.env ?? process.env,
