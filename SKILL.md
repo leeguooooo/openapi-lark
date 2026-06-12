@@ -406,6 +406,7 @@ lark-cli auth login --recommend
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
 - **parentDocToken 跨用户去重**（v0.10.1）：auto-tokens 缓存 miss（换人 clone / 换机器 / 删 `.openapi-lark/`）时，先列 parent 已有子节点按标题（忽略大小写/首尾空白）认领并写回缓存，找不到才创建——修复"另一个用户跑 sync 整棵树重复建一份"。列子节点失败仅告警，退回创建行为不阻断 sync。
+- **未共享状态警告**（v0.10.1）：sync 启动时检测「本机无任何 `.openapi-lark/` 状态文件 + 该目录被 .gitignore 忽略」（即换人 clone / 换机器首跑），stderr 警告：hash 缓存不随 git 共享，本次会按标题认领线上文档并全量重推；建议多人协作把 `.openapi-lark/` 移出 .gitignore 提交，或固定由 CI 执行 sync。只在首跑触发一次，本机有状态后不再出现。
 - **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
 - **createWikiChild 锁冲突自动重试**（v1.9+）：飞书 wiki 服务端 131009 错误自动退避重试
 

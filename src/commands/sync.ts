@@ -10,6 +10,7 @@ import { loadLock, saveLock } from '../sync-lock.js';
 import { loadNodeMap, saveNodeMap } from '../node-map.js';
 import { resolveDocTokens } from './resolve-doctokens.js';
 import { preflight, PreflightError } from '../lark/preflight.js';
+import { detectUnsharedState } from '../state-share.js';
 import { push } from '../lark/push.js';
 import {
   EXIT_BUSINESS,
@@ -60,6 +61,15 @@ export async function runSync(args: SyncArgs): Promise<number> {
   if (services.length === 0) {
     process.stderr.write(`[sync] no service matched: ${args.service ?? '<all>'}\n`);
     return EXIT_CONFIG;
+  }
+
+  // Unshared-state check: hash cache / node-map / auto-tokens live in
+  // .openapi-lark/ which the default setup gitignores. A fresh clone / new
+  // machine starts with zero state — warn so the full re-push (and the fact
+  // that another user's hash cache can't help) isn't a silent surprise.
+  const unshared = detectUnsharedState(loaded.basedir);
+  if (unshared.shouldWarn) {
+    process.stderr.write(unshared.message);
   }
 
   // Preflight runs in ALL modes (incl. dry-run). Spec data flow: preflight → lint → render → push.
