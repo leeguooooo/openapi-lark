@@ -69,7 +69,7 @@ services:
     mode: endpoint
 ```
 
-首次 sync 自动建 4 个子节点；token 存到 `.openapi-lark/auto-tokens.json`（gitignored），后续 sync 复用。
+首次 sync 自动建 4 个子节点；token 存到 `.openapi-lark/auto-tokens.json`（gitignored），后续 sync 复用。缓存 miss（换人 clone / 换机器 / 删了 `.openapi-lark/`）时会先列 parent 下已有子节点按标题认领，**不会重复建树**（v0.10.1+）。
 
 ## 单 service 项目（一个 openapi 一个 wiki URL）
 
@@ -405,6 +405,7 @@ lark-cli auth login --recommend
 - **sync 缓存纳入工具版本**（v0.6）：跳过缓存的 hash 现含 openapi-lark 自身版本号（`openapi-lark@<version>` 前缀）。渲染层升级（即使源 spec 未变）也会令所有接口的 hash 变化，普通 `sync` 自动重推，无需 `--force`。修复 v0.5.1 升级后 "175 skipped / 0 pushed"、清理后的输出没到 Lark 的问题。
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
+- **parentDocToken 跨用户去重**（v0.10.1）：auto-tokens 缓存 miss（换人 clone / 换机器 / 删 `.openapi-lark/`）时，先列 parent 已有子节点按标题（忽略大小写/首尾空白）认领并写回缓存，找不到才创建——修复"另一个用户跑 sync 整棵树重复建一份"。列子节点失败仅告警，退回创建行为不阻断 sync。
 - **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
 - **createWikiChild 锁冲突自动重试**（v1.9+）：飞书 wiki 服务端 131009 错误自动退避重试
 
