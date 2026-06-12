@@ -10,6 +10,12 @@ export interface ParsedPushOutput {
   url: string | null;
   raw: string;
   jsonMode: boolean;
+  /** lark-cli v2 top-level `result` field ('success' | 'partial_success' | …).
+   *  undefined when absent (older output shapes). */
+  result?: string;
+  /** lark-cli v2 top-level `warnings` array (e.g. docx import degrade_code
+   *  entries). undefined when absent. */
+  warnings?: unknown[];
 }
 
 const URL_REGEX =
@@ -51,7 +57,12 @@ export function parsePushOutput(stdout: string): ParsedPushOutput {
         findUrlInValue(parsed);
       const url =
         typeof candidate === 'string' && candidate.length > 0 ? candidate : null;
-      return { url, raw, jsonMode: true };
+      const result =
+        typeof (parsed as any)?.result === 'string' ? ((parsed as any).result as string) : undefined;
+      const warnings = Array.isArray((parsed as any)?.warnings)
+        ? ((parsed as any).warnings as unknown[])
+        : undefined;
+      return { url, raw, jsonMode: true, result, warnings };
     } catch {
       // fall through to regex
     }

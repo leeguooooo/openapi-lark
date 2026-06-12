@@ -192,3 +192,71 @@ describe('push (with fake lark)', () => {
     }
   });
 });
+
+describe('issue #3 — partial_success / warnings 不得报成功', () => {
+  function pushWithStdout(stdout: string) {
+    return push({
+      docToken: 'doccnX',
+      mdPath: '/tmp/x.md',
+      larkBin: 'lark',
+      timeoutMs: 5000,
+      env: {
+        PATH: pathWith(fakeDir),
+        FAKE_LARK_STDOUT: stdout,
+        FAKE_LARK_EXIT: '0',
+      },
+    });
+  }
+
+  it('result=partial_success (degrade_code 3001) → ok:false, reason degraded', () => {
+    const result = pushWithStdout(
+      JSON.stringify({
+        ok: true,
+        data: { url: 'https://feishu.cn/docx/abc' },
+        result: 'partial_success',
+        warnings: [
+          {
+            degrade_code: 3001,
+            msg: 'XML tokenization error. Check the input for illegal characters or unclosed tags',
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('degraded');
+      expect(result.message).toContain('partial_success');
+      expect(result.message).toContain('3001');
+    }
+  });
+
+  it('exit 0 + 非空 warnings（即使 result=success）→ ok:false degraded', () => {
+    const result = pushWithStdout(
+      JSON.stringify({
+        ok: true,
+        data: { url: 'https://feishu.cn/docx/abc' },
+        result: 'success',
+        warnings: [{ degrade_code: 9999, msg: 'something was dropped' }],
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('degraded');
+  });
+
+  it('result=success + 空 warnings 维持成功', () => {
+    const result = pushWithStdout(
+      JSON.stringify({
+        ok: true,
+        data: { url: 'https://feishu.cn/docx/abc' },
+        result: 'success',
+        warnings: [],
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('无 result/warnings 字段的老输出维持成功（向后兼容）', () => {
+    const result = pushWithStdout('{"code":0,"data":{"url":"https://feishu.cn/docx/abc"}}');
+    expect(result.ok).toBe(true);
+  });
+});

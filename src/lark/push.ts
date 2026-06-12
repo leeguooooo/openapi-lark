@@ -7,6 +7,10 @@ export type PushFailureReason =
   | 'auth'
   | 'permission'
   | 'non-zero'
+  /** lark-cli exited 0 but reported result=partial_success or non-empty
+   *  warnings (e.g. docx import degrade_code=3001 truncated the doc).
+   *  The pushed document may be incomplete — must not be reported as ✓. */
+  | 'degraded'
   | 'unknown';
 
 export interface PushInput {
@@ -151,6 +155,28 @@ export function push(input: PushInput): PushResult {
 
   if (res.status === 0) {
     const parsed = parsePushOutput(stdout);
+    // Issue #3: lark-cli exits 0 even when the docx import only PARTIALLY
+    // succeeded (result=partial_success + warnings with degrade_code, e.g.
+    // 3001 "XML tokenization error" — the doc is truncated at the offending
+    // byte). Treating that as ✓ hides an incomplete document. Surface it as a
+    // failure so callers report it (and the XML path falls back to markdown).
+    const degradedResult =
+      typeof parsed.result === 'string' && parsed.result !== 'success';
+    const hasWarnings = Array.isArray(parsed.warnings) && parsed.warnings.length > 0;
+    if (degradedResult || hasWarnings) {
+      const detail = [
+        parsed.result ? `result=${parsed.result}` : null,
+        hasWarnings ? `warnings=${JSON.stringify(parsed.warnings).slice(0, 500)}` : null,
+      ]
+        .filter(Boolean)
+        .join('; ');
+      return {
+        ok: false,
+        reason: 'degraded',
+        message: `push degraded — document may be incomplete: ${detail}`,
+        raw: stdout,
+      };
+    }
     return { ok: true, url: parsed.url, jsonMode: parsed.jsonMode, raw: stdout };
   }
 

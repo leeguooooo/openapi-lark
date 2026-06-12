@@ -718,3 +718,41 @@ describe('markdownToXml — v0.8 description-body regression', () => {
     expect(xml).toContain('<b>GET /api/admin/voice-room/{roomNo}/presence-records</b>');
   });
 });
+
+describe('issue #3 — NUL 占位符泄漏（嵌套行内标记）', () => {
+  it('bold 内嵌 code：占位符必须全部还原', () => {
+    const out = inlineToXml('必须传 **`roomNo` 或 `kolUserId`** 才行');
+    expect(out).toBe(
+      '必须传 <b><code>roomNo</code> 或 <code>kolUserId</code></b> 才行',
+    );
+    expect(out).not.toMatch(/\u0000/);
+  });
+
+  it('link 文本内嵌 code：占位符必须全部还原', () => {
+    const out = inlineToXml('see [`foo`](https://x.com)');
+    expect(out).toBe('see <a href="https://x.com"><code>foo</code></a>');
+    expect(out).not.toMatch(/\u0000/);
+  });
+
+  it('bold 内嵌 link：占位符必须全部还原', () => {
+    const out = inlineToXml('**[doc](https://x.com)**');
+    expect(out).toBe('<b><a href="https://x.com">doc</a></b>');
+    expect(out).not.toMatch(/\u0000/);
+  });
+
+  it('li 内嵌 bold+code 走 markdownToXml 全链路无 NUL', () => {
+    const md =
+      '# 标题\n\n- 必须传 **`roomNo`** 或 **`kolUserId`** —— 会话聚合要全量读取窗口内事件\n';
+    const xml = markdownToXml(md, {});
+    expect(xml).toContain('<code>roomNo</code>');
+    expect(xml).toContain('<code>kolUserId</code>');
+    expect(xml).not.toMatch(/\u0000/);
+  });
+
+  it('markdownToXml 输出绝不含 XML 非法控制字符（兜底 scrub）', () => {
+    const md = '# 标题\n\n正文带控制字符\u0001\u0002应被剥离\n';
+    const xml = markdownToXml(md, {});
+    expect(xml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
+    expect(xml).toContain('正文带控制字符');
+  });
+});

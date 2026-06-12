@@ -405,6 +405,7 @@ lark-cli auth login --recommend
 - **sync 缓存纳入工具版本**（v0.6）：跳过缓存的 hash 现含 openapi-lark 自身版本号（`openapi-lark@<version>` 前缀）。渲染层升级（即使源 spec 未变）也会令所有接口的 hash 变化，普通 `sync` 自动重推，无需 `--force`。修复 v0.5.1 升级后 "175 skipped / 0 pushed"、清理后的输出没到 Lark 的问题。
 - **删多余 boilerplate**：widdershins 的 Code samples / 200 Response 错误 dump / aside / 全局 Base URLs + Authentication 前言 / Generator 注释 / 空 H1 等全部 strip
 - **docx title 锁定**：每个 docx 唯一 H1 = 我们的目标标题（lark 用 first H1 当 title）
+- **XML NUL 泄漏 + partial_success 修复**（v0.10.3，issue #3）：① 行内标记嵌套（bold/link 内含 `code`）时占位符改为循环还原，不再把裸 NUL 泄进 XML（NUL 会让飞书 docx import 在 degrade_code=3001 处截断全文）；② `docs +update` 返回 `result=partial_success` 或非空 `warnings` 时视为推送失败（XML 路径自动回退 markdown 重推），不再误报 ✓；③ 兜底：最终 XML 输出剥离所有 XML 非法控制字符。
 - **parentDocToken 跨用户去重**（v0.10.1）：auto-tokens 缓存 miss（换人 clone / 换机器 / 删 `.openapi-lark/`）时，先列 parent 已有子节点按标题（忽略大小写/首尾空白）认领并写回缓存，找不到才创建——修复"另一个用户跑 sync 整棵树重复建一份"。列子节点失败仅告警，退回创建行为不阻断 sync。
 - **未共享状态警告**（v0.10.1）：sync 启动时检测「本机无任何 `.openapi-lark/` 状态文件 + 该目录被 .gitignore 忽略」（即换人 clone / 换机器首跑），stderr 警告：hash 缓存不随 git 共享，本次会按标题认领线上文档并全量重推；建议多人协作把 `.openapi-lark/` 移出 .gitignore 提交，或固定由 CI 执行 sync。只在首跑触发一次，本机有状态后不再出现。
 - **path-prefix 自动分子组**（v1.9+）：同 tag 接口 ≥8 个时按 `/foo/bar/*` 路径前缀自动拆 4 级树，无需配置
