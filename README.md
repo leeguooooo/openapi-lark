@@ -53,8 +53,9 @@ http(s)://.../openapi.json (NEW v1.10) ─┘
 # 一次性运行（推荐）
 npx -y -p github:leeguooooo/openapi-lark openapi-lark --help
 
-# 或全局装上
-npm i -g github:leeguooooo/openapi-lark
+# 或全局装上（Release tarball；不要用 npm i -g github:… —— npm 全局装 git 依赖
+# 会在传递依赖的 postinstall 上报 spawn sh ENOENT，npm 10/11 均复现）
+npm i -g https://github.com/leeguooooo/openapi-lark/releases/latest/download/openapi-lark.tgz
 ```
 
 ### 作为 Claude Code / Codex skill
@@ -274,7 +275,7 @@ jobs:
           restore-keys: openapi-lark-
 
       - run: npx @larksuite/cli@latest install
-      - run: npm i -g github:leeguooooo/openapi-lark
+      - run: npm i -g https://github.com/leeguooooo/openapi-lark/releases/latest/download/openapi-lark.tgz
 
       - run: openapi-lark sync
         env:
@@ -307,7 +308,7 @@ pipeline {
     stage('Install') {
       steps {
         sh 'npx @larksuite/cli@latest install'
-        sh 'npm i -g github:leeguooooo/openapi-lark'
+        sh 'npm i -g https://github.com/leeguooooo/openapi-lark/releases/latest/download/openapi-lark.tgz'
       }
     }
     stage('Sync') {

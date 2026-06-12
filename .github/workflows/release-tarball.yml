@@ -1,0 +1,39 @@
+# Attach the npm-pack tarball to every GitHub Release as `openapi-lark.tgz`.
+#
+# Why: the documented install path is
+#   npm i -g https://github.com/leeguooooo/openapi-lark/releases/latest/download/openapi-lark.tgz
+# because `npm i -g github:…` hits an npm bug — GLOBAL installs of git
+# dependencies fail on transitive postinstall scripts (`spawn sh ENOENT` on
+# core-js via widdershins; repro'd on npm 10 + 11, 2026-06-12). Local installs
+# and `npx -p github:…` are unaffected.
+#
+# The asset name is version-less so `releases/latest/download/` is evergreen.
+name: release-tarball
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  tarball:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # npm pack runs `prepare` (tsc + chmod +x dist/cli.js) — the exec bit on
+      # dist/cli.js must be in the tarball or the global bin link is 644 and
+      # fails with "permission denied".
+      - run: npm pack
+      - run: mv openapi-lark-*.tgz openapi-lark.tgz
+      - run: tar -tvzf openapi-lark.tgz | grep 'package/dist/cli.js' | grep -q '^-rwx' || (echo "dist/cli.js missing exec bit in tarball" && exit 1)
+      - run: gh release upload "${{ github.event.release.tag_name }}" openapi-lark.tgz --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

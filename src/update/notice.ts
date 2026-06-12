@@ -4,17 +4,19 @@
 import type { UpdateInfo } from './check.js';
 
 /**
- * One-line notice formatted for stderr. Two install paths covered so the
- * user can pick whichever fits their setup:
- *
- *   npm i -g github:leeguooooo/openapi-lark   (re-pulls main HEAD)
- *   rm -rf ~/.npm/_npx                        (clears npx cache; next run refreshes)
+ * One-line notice formatted for stderr. The update path is the GitHub Release
+ * tarball — NOT `npm i -g github:...`: npm has a bug where GLOBAL installs of
+ * git dependencies fail on transitive postinstall scripts (`spawn sh ENOENT`
+ * on core-js via widdershins; local installs are fine, repro'd on npm 10+11,
+ * 2026-06-12). The release asset is built by CI with the exec bit set.
  */
+export const UPDATE_COMMAND =
+  'npm i -g https://github.com/leeguooooo/openapi-lark/releases/latest/download/openapi-lark.tgz';
+
 export function formatNotice(info: UpdateInfo): string {
   const lines = [
     `[openapi-lark] v${info.latest} available (current ${info.current})`,
-    `  update: npm i -g github:leeguooooo/openapi-lark`,
-    `  or:     rm -rf ~/.npm/_npx   # clears npx cache for next run`,
+    `  update: ${UPDATE_COMMAND}`,
     `  silence: export OPENAPI_LARK_NO_UPDATE_NOTIFIER=1`,
   ];
   return lines.join('\n');
