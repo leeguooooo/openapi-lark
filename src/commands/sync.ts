@@ -102,7 +102,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
     if (autoStats.assigned > 0) {
       process.stdout.write(
         `[sync] resolved ${autoStats.assigned} docToken(s): ` +
-          `${autoStats.created} created, ${autoStats.reused} reused from cache\n`,
+          `${autoStats.created} created, ${autoStats.reused} reused (cache or title match)\n`,
       );
     }
   } catch (err) {
