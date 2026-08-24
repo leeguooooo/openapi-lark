@@ -426,11 +426,16 @@ export function localizeHeadings(md: string): string {
     /\|\s*Status\s*\|\s*Meaning\s*\|\s*Description\s*\|\s*Schema\s*\|/g,
     '| 状态码 | 含义 | 描述 | Schema |',
   );
-  // Enum table header (widdershins emits `|Parameter|Value|` for the
-  // "Enumerated Values" section — the only un-localized header left).
+  // Enum table header. widdershins emits `|Parameter|Value|` when the enum sits
+  // on a request parameter and `|Property|Value|` when it sits on a schema
+  // field — both reach the reader untranslated otherwise.
   out = out.replace(
     /\|\s*Parameter\s*\|\s*Value\s*\|/g,
     '| 参数 | 取值 |',
+  );
+  out = out.replace(
+    /\|\s*Property\s*\|\s*Value\s*\|/g,
+    '| 字段 | 取值 |',
   );
   return out;
 }
@@ -518,6 +523,8 @@ export function postProcess(md: string, api?: any, singleOperationSummary?: stri
   // Enrich the parameters table's 约束 column from the parsed schema (widdershins
   // drops minimum/maximum/default/pattern/…). Needs the dereferenced api.
   if (api) out = enrichParamsTable(out, api);
+  // 枚举值表第一列补成完整点路径，跟字段表对得上（同名字段才需要，见函数注释）
+  if (api) out = qualifyEnumTables(out, api);
   if (singleOperationSummary) {
     out = collapseRedundantOperationIntro(out, singleOperationSummary);
   }
@@ -525,4 +532,141 @@ export function postProcess(md: string, api?: any, singleOperationSummary?: stri
   // Final collapse of any blank-line runs left by other transforms
   out = out.replace(/\n{3,}/g, '\n\n');
   return out;
+}
+
+/**
+ * widdershins 的「枚举值」表第一列只写字段的叶子名（`type`、`kind`），不写它挂在
+ * 哪一层。一个响应里出现两个 `type`（比如 `drop.type` 与 `cost.type`）时读者无从
+ * 分辨这张表说的是哪一个——而字段表给的是完整点路径，两边对不上。
+ *
+ * 这里从 dereference 过的 api 里把带 enum 的字段连同点路径捞出来，按
+ * (叶子名, 取值集合) 建索引，再把枚举表第一列换成完整路径。取值集合参与匹配是
+ * 关键：`drop.type` 没有 enum，所以 `type` + ["dice","free"] 只会命中 `cost.type`
+ * 一个候选。命中不唯一时原样保留——宁可少写路径，也不写错路径。
+ *
+ * 路径写法与 dottifySchemaRows 一致（数组段带 `[]`），两张表因此能对上。
+ */
+function enumKey(leaf: string, values: string[]): string {
+  return `${leaf} ${JSON.stringify(values)}`;
+}
+
+function isArraySchema(schema: any): boolean {
+  const t = schema?.type;
+  return t === 'array' || (Array.isArray(t) && t.includes('array'));
+}
+
+/** key = 叶子名 + 取值集合 → 该组合出现过的全部点路径（去重）。 */
+export function collectEnumPaths(api: any): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+
+  const record = (path: string, values: unknown[]): void => {
+    const leafSeg = path.split('.').pop() ?? '';
+    const leaf = leafSeg.replace(/\[\]$/, '');
+    if (!leaf) return;
+    const key = enumKey(leaf, values.map((v) => String(v)));
+    const set = index.get(key) ?? new Set<string>();
+    set.add(path);
+    index.set(key, set);
+  };
+
+  // Dereferenced specs can carry cycles ($ref pointing back at an ancestor).
+  const active = new Set<any>();
+  const walk = (schema: any, path: string): void => {
+    if (!schema || typeof schema !== 'object') return;
+    if (active.has(schema)) return;
+    active.add(schema);
+    if (Array.isArray(schema.enum) && path) record(path, schema.enum);
+    if (schema.properties && typeof schema.properties === 'object') {
+      for (const [name, child] of Object.entries(schema.properties as Record<string, any>)) {
+        const seg = isArraySchema(child) ? `${name}[]` : name;
+        walk(child, path ? `${path}.${seg}` : seg);
+      }
+    }
+    // items shares its parent's path — the parent segment already carries `[]`
+    if (schema.items) walk(schema.items, path);
+    for (const combinator of ['allOf', 'oneOf', 'anyOf'] as const) {
+      const branches = schema[combinator];
+      if (Array.isArray(branches)) for (const b of branches) walk(b, path);
+    }
+    active.delete(schema);
+  };
+
+  const paths = (api?.paths ?? {}) as Record<string, any>;
+  for (const pathItem of Object.values(paths)) {
+    if (!pathItem || typeof pathItem !== 'object') continue;
+    for (const op of Object.values(pathItem as Record<string, any>)) {
+      if (!op || typeof op !== 'object') continue;
+      for (const param of ((op as any).parameters ?? []) as any[]) {
+        if (param?.name && param.schema) walk(param.schema, String(param.name));
+      }
+      for (const c of Object.values(((op as any).requestBody?.content ?? {}) as Record<string, any>)) {
+        if ((c as any)?.schema) walk((c as any).schema, '');
+      }
+      for (const res of Object.values(((op as any).responses ?? {}) as Record<string, any>)) {
+        for (const c of Object.values(((res as any)?.content ?? {}) as Record<string, any>)) {
+          if ((c as any)?.schema) walk((c as any).schema, '');
+        }
+      }
+    }
+  }
+  return index;
+}
+
+/** `| 字段 | 取值 |` / `| 参数 | 取值 |` — the two enum-table headers we emit. */
+const ENUM_TABLE_HEADER = /^\|\s*(?:字段|参数)\s*\|\s*取值\s*\|\s*$/;
+
+/** `|» target_kind|item|` → { name: 'target_kind', value: 'item' } */
+function splitEnumRow(line: string): { name: string; value: string } | null {
+  const cells = line.trim().split('|');
+  // A well-formed row splits into ['', name, value, ''] — anything else isn't ours.
+  if (cells.length !== 4) return null;
+  const name = cells[1].replace(/^»+\s*/, '').trim();
+  const value = cells[2].trim();
+  if (!name || /^-+$/.test(name)) return null;
+  return { name, value };
+}
+
+export function qualifyEnumTables(md: string, api: any): string {
+  const index = collectEnumPaths(api);
+  if (index.size === 0) return md;
+
+  const lines = md.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (!ENUM_TABLE_HEADER.test(lines[i].trim())) continue;
+    // header, separator, then body rows until the first non-row line
+    const start = i + 2;
+    if (start >= lines.length) continue;
+    let end = start;
+    while (end < lines.length && /^\|.*\|$/.test(lines[end].trim())) end++;
+
+    // widdershins emits one row per value, so rows sharing a name form one field.
+    let g = start;
+    while (g < end) {
+      const first = splitEnumRow(lines[g]);
+      if (!first) {
+        g++;
+        continue;
+      }
+      let last = g;
+      const values: string[] = [first.value];
+      while (last + 1 < end) {
+        const next = splitEnumRow(lines[last + 1]);
+        if (!next || next.name !== first.name) break;
+        values.push(next.value);
+        last++;
+      }
+      const candidates = index.get(enumKey(first.name, values));
+      if (candidates?.size === 1) {
+        const full = [...candidates][0];
+        if (full !== first.name) {
+          for (let r = g; r <= last; r++) {
+            lines[r] = lines[r].replace(/^(\s*\|\s*)»*\s*[^|]*?(\s*\|)/, `$1${full}$2`);
+          }
+        }
+      }
+      g = last + 1;
+    }
+    i = end;
+  }
+  return lines.join('\n');
 }

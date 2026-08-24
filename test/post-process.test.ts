@@ -9,6 +9,7 @@ import {
   localizeHeadings,
   localizeInlineSchemaCell,
   replaceOperationIdHeadings,
+  qualifyEnumTables,
 } from '../src/renderer/post-process.js';
 
 describe('escapePipesInTables', () => {
@@ -526,5 +527,150 @@ describe('post-process integration with api', () => {
     expect(out).toContain('## 获取 X');
     expect(out).toContain('### 参数');
     expect(out).not.toContain('Scroll down');
+  });
+});
+
+describe('qualifyEnumTables', () => {
+  // 一个响应里两个 `type`：drop.type 没有 enum，cost.type 有。枚举表只写 `type`
+  // 时读者分不清说的是哪个——这正是要补全路径的理由。
+  const rollApi = {
+    paths: {
+      '/roll': {
+        post: {
+          responses: {
+            '200': {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        type: 'object',
+                        properties: {
+                          drop: {
+                            type: 'object',
+                            properties: { type: { type: 'string' } },
+                          },
+                          cost: {
+                            type: 'object',
+                            properties: { type: { type: 'string', enum: ['dice', 'free'] } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const enumTable = (name: string, values: string[]): string =>
+    ['#### 枚举值', '| 字段 | 取值 |', '|---|---|', ...values.map((v) => `|${name}|${v}|`)].join('\n');
+
+  it('qualifies the leaf name into a full dotted path', () => {
+    const out = qualifyEnumTables(enumTable('type', ['dice', 'free']), rollApi);
+    expect(out).toContain('|data.cost.type|dice|');
+    expect(out).toContain('|data.cost.type|free|');
+    expect(out).not.toContain('|type|dice|');
+  });
+
+  it('marks array hops with [] so it lines up with the schema table', () => {
+    const api = {
+      paths: {
+        '/attacks': {
+          get: {
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        attacks: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: { kind: { type: 'string', enum: ['hit', 'block'] } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const out = qualifyEnumTables(enumTable('kind', ['hit', 'block']), api);
+    expect(out).toContain('|attacks[].kind|hit|');
+  });
+
+  it('leaves the row alone when the same name+values sit at two paths', () => {
+    const api = {
+      paths: {
+        '/x': {
+          get: {
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        a: { type: 'object', properties: { s: { type: 'string', enum: ['x'] } } },
+                        b: { type: 'object', properties: { s: { type: 'string', enum: ['x'] } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const out = qualifyEnumTables(enumTable('s', ['x']), api);
+    expect(out).toContain('|s|x|');
+  });
+
+  it('strips the » marker off request-parameter enum rows', () => {
+    const api = {
+      paths: {
+        '/redeem': {
+          post: {
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      target: {
+                        type: 'object',
+                        properties: { kind: { type: 'string', enum: ['item', 'idol'] } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const md = ['#### 枚举值', '| 参数 | 取值 |', '|---|---|', '|» kind|item|', '|» kind|idol|'].join('\n');
+    const out = qualifyEnumTables(md, api);
+    expect(out).toContain('|target.kind|item|');
+    expect(out).not.toContain('|» kind|');
+  });
+
+  it('is a no-op for tables that are not enum tables', () => {
+    const md = ['| 名称 | 类型 |', '|---|---|', '|type|string|'].join('\n');
+    expect(qualifyEnumTables(md, rollApi)).toBe(md);
   });
 });
