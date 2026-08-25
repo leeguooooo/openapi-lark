@@ -674,3 +674,95 @@ describe('qualifyEnumTables', () => {
     expect(qualifyEnumTables(md, rollApi)).toBe(md);
   });
 });
+
+describe('qualifyEnumTables — 逐值说明（x-enumDescriptions）', () => {
+  const apiWith = (ext: unknown) => ({
+    paths: {
+      '/roll': {
+        post: {
+          responses: {
+            '200': {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      cost: {
+                        type: 'object',
+                        properties: {
+                          type: { type: 'string', enum: ['dice', 'free'], 'x-enumDescriptions': ext },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const table = ['#### 枚举值', '| 字段 | 取值 |', '|---|---|', '|type|dice|', '|type|free|'].join('\n');
+
+  it('有说明就升成三列，并按取值对号入座', () => {
+    const out = qualifyEnumTables(table, apiWith({ dice: '扣骰子', free: '扣免费券' }));
+    expect(out).toContain('| 字段 | 取值 | 说明 |');
+    expect(out).toContain('|---|---|---|');
+    expect(out).toContain('|cost.type|dice|扣骰子|');
+    expect(out).toContain('|cost.type|free|扣免费券|');
+  });
+
+  it('只配了一部分取值时，缺的那格留空而不是错位', () => {
+    const out = qualifyEnumTables(table, apiWith({ dice: '扣骰子' }));
+    expect(out).toContain('|cost.type|dice|扣骰子|');
+    expect(out).toContain('|cost.type|free||');
+  });
+
+  it('没配 x-enumDescriptions 就保持两列，不留空列', () => {
+    const out = qualifyEnumTables(table, apiWith(undefined));
+    expect(out).toContain('| 字段 | 取值 |');
+    expect(out).not.toContain('说明');
+    expect(out).toContain('|cost.type|dice|');
+    expect(out).not.toContain('|cost.type|dice||');
+  });
+
+  it('非字符串的说明值直接忽略——宁可不写也不把 [object Object] 写进文档', () => {
+    const out = qualifyEnumTables(table, apiWith({ dice: { zh: '扣骰子' }, free: '' }));
+    expect(out).not.toContain('说明');
+    expect(out).not.toContain('object');
+  });
+
+  it('也认 x-enum-descriptions 这个连字符写法', () => {
+    const api = {
+      paths: {
+        '/x': {
+          get: {
+            responses: {
+              '200': {
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        kind: {
+                          type: 'string',
+                          enum: ['a', 'b'],
+                          'x-enum-descriptions': { a: '甲', b: '乙' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const md = ['#### 枚举值', '| 字段 | 取值 |', '|---|---|', '|kind|a|', '|kind|b|'].join('\n');
+    const out = qualifyEnumTables(md, api);
+    expect(out).toContain('|kind|a|甲|');
+  });
+});

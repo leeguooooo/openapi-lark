@@ -555,18 +555,40 @@ function isArraySchema(schema: any): boolean {
   return t === 'array' || (Array.isArray(t) && t.includes('array'));
 }
 
-/** key = 叶子名 + 取值集合 → 该组合出现过的全部点路径（去重）。 */
-export function collectEnumPaths(api: any): Map<string, Set<string>> {
-  const index = new Map<string, Set<string>>();
+/**
+ * key = 叶子名 + 取值集合 → { 该组合出现过的全部点路径, 逐值说明 }。
+ *
+ * 逐值说明取自 `x-enumDescriptions`（`{ 取值: 说明 }`）——OpenAPI 没有标准字段
+ * 描述单个枚举值，这是社区通行的扩展键。同一 key 在多处出现且说明不一致时
+ * 只留第一份，宁可少写也不拼接出四不像。
+ */
+export interface EnumSite {
+  paths: Set<string>;
+  /** 取值 → 说明，来自 x-enumDescriptions；没配就是 undefined */
+  descriptions?: Record<string, string>;
+}
 
-  const record = (path: string, values: unknown[]): void => {
+export function collectEnumPaths(api: any): Map<string, EnumSite> {
+  const index = new Map<string, EnumSite>();
+
+  const record = (path: string, values: unknown[], schema: any): void => {
     const leafSeg = path.split('.').pop() ?? '';
     const leaf = leafSeg.replace(/\[\]$/, '');
     if (!leaf) return;
     const key = enumKey(leaf, values.map((v) => String(v)));
-    const set = index.get(key) ?? new Set<string>();
-    set.add(path);
-    index.set(key, set);
+    const site = index.get(key) ?? { paths: new Set<string>() };
+    site.paths.add(path);
+    if (!site.descriptions) {
+      const raw = schema?.['x-enumDescriptions'] ?? schema?.['x-enum-descriptions'];
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const desc: Record<string, string> = {};
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+          if (typeof v === 'string' && v.trim()) desc[k] = v.trim();
+        }
+        if (Object.keys(desc).length) site.descriptions = desc;
+      }
+    }
+    index.set(key, site);
   };
 
   // Dereferenced specs can carry cycles ($ref pointing back at an ancestor).
@@ -575,7 +597,7 @@ export function collectEnumPaths(api: any): Map<string, Set<string>> {
     if (!schema || typeof schema !== 'object') return;
     if (active.has(schema)) return;
     active.add(schema);
-    if (Array.isArray(schema.enum) && path) record(path, schema.enum);
+    if (Array.isArray(schema.enum) && path) record(path, schema.enum, schema);
     if (schema.properties && typeof schema.properties === 'object') {
       for (const [name, child] of Object.entries(schema.properties as Record<string, any>)) {
         const seg = isArraySchema(child) ? `${name}[]` : name;
@@ -640,6 +662,7 @@ export function qualifyEnumTables(md: string, api: any): string {
     while (end < lines.length && /^\|.*\|$/.test(lines[end].trim())) end++;
 
     // widdershins emits one row per value, so rows sharing a name form one field.
+    let anyDescribed = false;
     let g = start;
     while (g < end) {
       const first = splitEnumRow(lines[g]);
@@ -655,16 +678,29 @@ export function qualifyEnumTables(md: string, api: any): string {
         values.push(next.value);
         last++;
       }
-      const candidates = index.get(enumKey(first.name, values));
-      if (candidates?.size === 1) {
-        const full = [...candidates][0];
-        if (full !== first.name) {
-          for (let r = g; r <= last; r++) {
-            lines[r] = lines[r].replace(/^(\s*\|\s*)»*\s*[^|]*?(\s*\|)/, `$1${full}$2`);
-          }
-        }
+      const site = index.get(enumKey(first.name, values));
+      const full = site?.paths.size === 1 ? [...site.paths][0] : undefined;
+      for (let r = g; r <= last; r++) {
+        const row = splitEnumRow(lines[r]);
+        if (!row) continue;
+        const name = full ?? row.name;
+        const note = site?.descriptions?.[row.value];
+        if (note) anyDescribed = true;
+        // Rebuild the row wholesale: the name cell may gain a path and the row
+        // may gain a third cell, and patching those separately gets fiddly.
+        lines[r] = `|${name}|${row.value}|${note ?? ''}|`;
       }
       g = last + 1;
+    }
+
+    if (anyDescribed) {
+      // Upgrade the table to three columns. Rows that had no note already carry
+      // an empty third cell from the rebuild above, so only the head needs work.
+      lines[i] = lines[i].trimEnd().replace(/\|\s*$/, '| 说明 |');
+      lines[i + 1] = '|---|---|---|';
+    } else {
+      // No notes anywhere in this table — drop the empty third cell again.
+      for (let r = start; r < end; r++) lines[r] = lines[r].replace(/\|\s*$/, '');
     }
     i = end;
   }
