@@ -4,6 +4,7 @@
  * Each transformer is small and isolated so tests can pin them individually.
  */
 
+import { splitOneOfVariants } from './oneof-variants.js';
 import { enrichParamsTable } from './constraints.js';
 
 /**
@@ -519,6 +520,9 @@ export function postProcess(md: string, api?: any, singleOperationSummary?: stri
   out = clearNonePlaceholders(out);
   out = localizeHeadings(out);
   out = localizeInlineSchemaCell(out);
+  // oneOf / anyOf 字段：去掉 *oneOf* / *xor* / *anonymous* 这些 schema 术语，
+  // 每个变体一张带完整点路径的表（见 oneof-variants.ts 顶部说明）
+  out = splitOneOfVariants(out);
   if (api) out = replaceOperationIdHeadings(out, api);
   // Enrich the parameters table's 约束 column from the parsed schema (widdershins
   // drops minimum/maximum/default/pattern/…). Needs the dereferenced api.
