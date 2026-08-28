@@ -129,8 +129,10 @@ export interface NamedExample {
   status: string;
   /** examples 映射里的键；单个 example / 合成示例时为空串 */
   name: string;
-  /** examples[].summary，没有则空串 */
+  /** examples[].summary（短标签，Apifox 也拿它当 tab 名），没有则空串 */
   summary: string;
+  /** examples[].description（长说明，成段），没有则空串 */
+  description: string;
   value: unknown;
 }
 
@@ -144,10 +146,15 @@ function authoredExamples(content: any): Array<Omit<NamedExample, 'status'>> {
   if (isObj(content.examples)) {
     for (const [name, ex] of Object.entries(content.examples as Record<string, any>)) {
       if (!isObj(ex) || !('value' in ex)) continue;
-      out.push({ name, summary: typeof ex.summary === 'string' ? ex.summary : '', value: ex.value });
+      out.push({
+        name,
+        summary: typeof ex.summary === 'string' ? ex.summary : '',
+        description: typeof ex.description === 'string' ? ex.description : '',
+        value: ex.value,
+      });
     }
   }
-  if (!out.length && content.example !== undefined) out.push({ name: '', summary: '', value: content.example });
+  if (!out.length && content.example !== undefined) out.push({ name: '', summary: '', description: '', value: content.example });
   return out;
 }
 
@@ -167,5 +174,5 @@ export function namedExamplesForOperation(op: any): NamedExample[] {
     if (authored.length) return authored.map((a) => ({ status, ...a }));
   }
   const synthesized = exampleForOperation(op);
-  return synthesized ? [{ status: synthesized.status, name: '', summary: '', value: synthesized.example }] : [];
+  return synthesized ? [{ status: synthesized.status, name: '', summary: '', description: '', value: synthesized.example }] : [];
 }

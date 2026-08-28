@@ -121,10 +121,12 @@ function appendResponseExample(md: string, api: any): string {
       // 标题文字会原样成为飞书代码块的 caption（markdown-to-xml 按「响应示例」前缀识别）。
       const block = examples
         .map((ex) => {
-          // 标题只带键名（短，也是飞书代码块的 caption）；summary 往往是一整句说明，单独成段
-          const heading = `### 响应示例 (${ex.status})${ex.name ? `：${ex.name}` : ''}`;
-          const summary = ex.summary ? `\n\n${ex.summary}` : '';
-          return `\n\n${heading}${summary}\n\n\`\`\`json\n${JSON.stringify(ex.value, null, 2)}\n\`\`\`\n`;
+          // 标题带短标签（summary，没有就键名；也是飞书代码块的 caption），description 单独成段。
+          // 与 Apifox 的用法一致：它拿 summary 当示例 tab 名、description 当说明。
+          const label = ex.summary || ex.name;
+          const heading = `### 响应示例 (${ex.status})${label ? `：${label}` : ''}`;
+          const desc = ex.description ? `\n\n${ex.description}` : '';
+          return `\n\n${heading}${desc}\n\n\`\`\`json\n${JSON.stringify(ex.value, null, 2)}\n\`\`\`\n`;
         })
         .join('');
       return md.trimEnd() + block;
