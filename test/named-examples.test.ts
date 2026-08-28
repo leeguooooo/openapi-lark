@@ -45,13 +45,17 @@ describe('endpoint 渲染：具名示例每条一节，caption 带标题', async
   };
   const { markdown } = await renderWiddershins({ api, singleOperationSummary: '掷骰' });
   it('markdown 里两节', () => {
-    expect(markdown).toContain('### 响应示例 (200)：普通掉落：金币');
-    expect(markdown).toContain('### 响应示例 (200)：御守 +1');
+    expect(markdown).toContain('### 响应示例 (200)：金币\n\n普通掉落：金币');
+    expect(markdown).toContain('### 响应示例 (200)：御守\n\n御守 +1');
     expect(markdown).toContain('"amount": 300');
+    // widdershins 自己渲染的那组裸围栏（> Example responses 之后）必须剥干净：每个示例只出现一次
+    expect(markdown.match(/"amount": 300/g)).toHaveLength(1);
+    expect(markdown).not.toContain('Example responses');
   });
   it('飞书 XML 的代码块 caption 就是小节标题', () => {
     const xml = markdownToXml(markdown, api);
-    expect(xml).toContain('caption="响应示例 (200)：普通掉落：金币');
-    expect(xml).toContain('caption="响应示例 (200)：御守 +1');
+    expect(xml).toContain('caption="响应示例 (200)：金币');
+    expect(xml).toContain('caption="响应示例 (200)：御守');
+    expect((xml.match(/<pre /g) || []).length).toBe(2);
   });
 });

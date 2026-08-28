@@ -154,6 +154,41 @@ export function stripUnsafeHtmlTags(md: string): string {
  * Strip widdershins-emitted boilerplate that is meaningless once we've turned
  * off code samples / multi-language tabs.
  */
+/**
+ * widdershins 对 spec 里**具名** examples 的渲染：`> Example responses` 一行、一行响应描述
+ * 的引用、然后每个示例一个裸 ```json 围栏（没有标题、分不清哪条是哪条）。这些示例我们在
+ * appendResponseExample 里按名字重新排版（每条一节），所以这里整段剥掉：从 `> Example
+ * responses` 起，吃掉紧随其后的引用行与连续的代码围栏（中间只允许空行），到第一个不是
+ * 这两种的行为止。`> 200 Response` 形式（单个合成示例）由下面另一条正则处理。
+ */
+function stripWiddershinsExampleResponses(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (/^\s*>\s*Example responses\s*$/.test(lines[i])) {
+      i++;
+      // 引用行（响应描述）、空行、代码围栏：连续吃
+      while (i < lines.length) {
+        const t = lines[i].trim();
+        if (t === '' || /^>/.test(t)) { i++; continue; }
+        if (/^```/.test(t)) {
+          i++;
+          while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) i++;
+          i++; // 收尾围栏
+          continue;
+        }
+        break;
+      }
+      out.push('');
+      continue;
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out.join('\n');
+}
+
 export function stripWiddershinsBoilerplate(md: string): string {
   let out = md;
   // Lead-in blockquote ("Scroll down for code samples..."): widdershins emits
@@ -168,6 +203,7 @@ export function stripWiddershinsBoilerplate(md: string): string {
   out = out.replace(/<!--\s*Generator:\s*Widdershins[^>]*-->/g, '');
   // Empty "Example responses" / "200 Response" callouts that precede schema-only
   // sections become noise without examples
+  out = stripWiddershinsExampleResponses(out);
   out = out.replace(/^\s*>\s*Example responses\s*$/gm, '');
   // Operation anchor links (`<a id="opIdXxx"></a>`) — purely for legacy
   // single-page nav; we have per-endpoint wiki nodes now
