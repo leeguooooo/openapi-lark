@@ -3,7 +3,7 @@ import * as widdershins from 'widdershins';
 import { createRequire } from 'node:module';
 import { postProcess } from '../post-process.js';
 import { detectHeadingJumps, type HeadingWarning } from '../heading-check.js';
-import { exampleForOperation } from '../example-from-schema.js';
+import { namedExamplesForOperation } from '../example-from-schema.js';
 import { injectSecuritySection } from '../security-section.js';
 import { injectRequestExample, injectRequestBodyExample } from '../request-example.js';
 
@@ -115,14 +115,17 @@ function appendResponseExample(md: string, api: any): string {
     for (const op of Object.values(pathItem as Record<string, any>)) {
       if (!op || typeof op !== 'object') continue;
       if (!('responses' in op)) continue;
-      const ex = exampleForOperation(op);
-      if (!ex) return md;
-      const json = JSON.stringify(ex.example, null, 2);
-      const block =
-        `\n\n### 响应示例 (${ex.status})\n\n` +
-        '```json\n' +
-        json +
-        '\n```\n';
+      const examples = namedExamplesForOperation(op);
+      if (!examples.length) return md;
+      // 具名示例（spec 里的 examples）每条一个小节，标题带 summary；合成示例只有一条、无名。
+      // 标题文字会原样成为飞书代码块的 caption（markdown-to-xml 按「响应示例」前缀识别）。
+      const block = examples
+        .map((ex) => {
+          const label = ex.summary || ex.name;
+          const heading = `### 响应示例 (${ex.status})${label ? `：${label}` : ''}`;
+          return `\n\n${heading}\n\n\`\`\`json\n${JSON.stringify(ex.value, null, 2)}\n\`\`\`\n`;
+        })
+        .join('');
       return md.trimEnd() + block;
     }
   }

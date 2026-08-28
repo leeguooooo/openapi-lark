@@ -37,6 +37,7 @@ http(s)://.../openapi.json (NEW v1.10) ─┘
 - ✅ **必填列醒目**（v0.10）— 所有字段表（参数 / 响应 Schema / 请求体）的「必填」列：必填 → 红字「必填」（由块着色 pass 上色）、可选 → `—`
 - ✅ **枚举值逐值中文说明**（v0.12）— 枚举值表补第三列「说明」，取自 spec 的 `x-enumDescriptions`；`dice`/`thunder_hit` 这类英文取值旁边直接有中文，不用回字段描述里翻。没配的表保持两列
 - ✅ **oneOf / anyOf 字段按变体分表**（v0.13）— `body: { oneOf: [A, B, C] }` 这种「形状由别的字段决定」的字段，不再输出 `*oneOf*` / `*xor*` / `*anonymous*` 这些 schema 术语；每个变体一张表，标题是「`data.chunks[].body` 形状 1/3：<变体描述>」，第一列是从主表续下来的完整点路径。之前这种字段要么被摊平混成一张表，要么作者干脆写成 `unknown` 放弃字段说明
+- ✅ **具名示例**（v0.14）— spec 在响应 / 请求体 content 上写了 `examples`（具名、可多个）或 `example`，就原样用它们：响应示例每条一节，标题带 summary（「响应示例 (200)：金币+骰子」），飞书代码块 caption 同名；没写才从 schema 合成。之前只会合成，`detail` 这种键随类型变的字段永远是 property1/property2
 - ✅ **枚举值表带字段路径**（v0.11）— 枚举值表第一列从叶子名（`type`）补成完整点路径（`data.cost.type`、`data.attacks[].kind`），与响应 Schema 表对得上；一个响应里有两个同名字段时不再分不清说的是哪一个。按 (叶子名, 取值集合) 匹配，命中不唯一时原样保留。响应侧枚举表表头同步汉化
 - ✅ **可读性优化**（v0.7）— 响应 Schema 字段名用**完整点路径**（`data.activities[].activityId`）替代 widdershins 的 `»»»` 标记；POST/PUT/PATCH 接口新增 pretty-print **请求体示例 (JSON)** 并移除 widdershins 的原始 schema dump；单一鉴权方案时不再重复展示「鉴权」段（callout 已含）；移除固定骨架的「调用流程」图
 - ✅ **sync 进度可见**（v0.8）— 显示阶段（`📋 阶段 1/2 规划结构` / `🚀 阶段 2/2 待推送：共 N 个接口`）、规划期滚动计数（`规划中：已对账 k 个节点…`）、每个接口推送带 `[i/N] p%` 进度（`[42/175] 24% ✓ …`），不再像卡死

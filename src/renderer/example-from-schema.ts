@@ -114,9 +114,58 @@ export function exampleForOperation(op: any): { status: string; example: unknown
  * Mirrors exampleForOperation but for the request side.
  */
 export function requestBodyExampleForOperation(op: any): { example: unknown } | null {
-  const schema = op?.requestBody?.content?.['application/json']?.schema;
+  const content = op?.requestBody?.content?.['application/json'];
+  // 作者在 content 上给了真实示例（example / examples）就用它，不再从 schema 合成
+  const authored = authoredExamples(content);
+  if (authored.length) return { example: authored[0].value };
+  const schema = content?.schema;
   if (!isObj(schema)) return null;
   const ex = generateExample(schema);
   if (ex === null || ex === undefined) return null;
   return { example: ex };
+}
+
+export interface NamedExample {
+  status: string;
+  /** examples 映射里的键；单个 example / 合成示例时为空串 */
+  name: string;
+  /** examples[].summary，没有则空串 */
+  summary: string;
+  value: unknown;
+}
+
+/**
+ * content 上作者手写的示例：OpenAPI 的 `examples`（具名、可多个）优先，其次单个 `example`。
+ * `externalValue` 只有链接没有内容，跳过。
+ */
+function authoredExamples(content: any): Array<Omit<NamedExample, 'status'>> {
+  if (!isObj(content)) return [];
+  const out: Array<Omit<NamedExample, 'status'>> = [];
+  if (isObj(content.examples)) {
+    for (const [name, ex] of Object.entries(content.examples as Record<string, any>)) {
+      if (!isObj(ex) || !('value' in ex)) continue;
+      out.push({ name, summary: typeof ex.summary === 'string' ? ex.summary : '', value: ex.value });
+    }
+  }
+  if (!out.length && content.example !== undefined) out.push({ name: '', summary: '', value: content.example });
+  return out;
+}
+
+/**
+ * 响应示例（v0.14）：作者写了具名 examples 就全部返回（一个 drop.type 一条这种），
+ * 否则退回 exampleForOperation 的合成示例（单条、无名）。状态码挑法与 exampleForOperation 一致。
+ */
+export function namedExamplesForOperation(op: any): NamedExample[] {
+  if (!isObj(op?.responses)) return [];
+  const order: string[] = ['200', '201', '202', '204', 'default'];
+  for (const k of Object.keys(op.responses)) {
+    if (!order.includes(k) && /^2\d\d$/.test(k)) order.splice(order.length - 1, 0, k);
+  }
+  for (const status of order) {
+    const content = op.responses[status]?.content?.['application/json'];
+    const authored = authoredExamples(content);
+    if (authored.length) return authored.map((a) => ({ status, ...a }));
+  }
+  const synthesized = exampleForOperation(op);
+  return synthesized ? [{ status: synthesized.status, name: '', summary: '', value: synthesized.example }] : [];
 }
