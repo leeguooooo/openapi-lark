@@ -68,6 +68,8 @@ export interface EndpointSyncContext {
   service: ServiceConfig;
   outDirRel: string;
   parallel: number;
+  /** 全run 共享的 lark-cli 并发闸门（见 listWikiChildrenBatch） */
+  larkLimit?: <T>(fn: () => Promise<T>) => Promise<T>;
   timeoutMs: number;
   pushBytesLimit: number;
   /** Force re-push even if hash matches. Default false. */
@@ -507,25 +509,24 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   // is created later in the loop) falls back to the synchronous listing, so
   // this can only make the sync faster, never break it.
   //
-  // Concurrency comes from --parallel, the same budget tree mode already spends
-  // on children (runTreeSync gets `parallelChildren: parallel`). Deliberately
-  // NOT a private constant: a hard-coded fan-out here would multiply with the
-  // per-service concurrency and quietly exceed whatever rate the operator
-  // picked. At --parallel 1 (the default) we skip the prefetch entirely, so
-  // default behaviour stays exactly as it was — this is opt-in speed, and the
-  // knob to opt in with is the one that already exists.
-  const prefetchConcurrency = Math.max(1, ctx.parallel ?? 1);
+  // Concurrency is a limiter created ONCE per sync run and shared by every
+  // service (see runSync), so the cap is global. Handing this layer its own
+  // number would multiply with the per-service concurrency and quietly exceed
+  // the rate the operator picked with --parallel.
+  //
+  // No limiter (or --parallel 1) means no prefetch at all: default behaviour
+  // stays byte-for-byte what it was, and the speedup is opt-in through the
+  // knob that already exists.
   let leafPrefetch = new Map<string, WikiChild[]>();
-  if (!ctx.dryRun && prefetchConcurrency > 1 && tagChildren.length > 0) {
+  if (!ctx.dryRun && ctx.larkLimit && tagChildren.length > 0) {
     leafPrefetch = await listWikiChildrenBatch(
       parent.spaceId,
       tagChildren.map((c) => c.nodeToken),
       larkBin,
       undefined,
-      prefetchConcurrency,
+      ctx.larkLimit,
     );
   }
-
   // Guard: warn (don't block) if docToken looks like it points at a shared /
   // space-root node rather than this project's dedicated parent. Skipped for
   // faked dry-run parents (tagChildren is empty there anyway).

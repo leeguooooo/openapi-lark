@@ -206,38 +206,41 @@ export function listWikiChildrenAsync(
 }
 
 /**
- * List children of many wiki nodes concurrently.
+ * List children of many wiki nodes, sharing ONE concurrency budget.
  *
- * Returns a map nodeToken → children. A node whose listing fails is simply
- * absent from the map — callers fall back to the synchronous path so a
+ * The limiter is supplied by the caller and is created once per sync run, so
+ * every service draws from the same pool: the cap is global, not per-service.
+ * An earlier version took a plain number, which multiplied with the
+ * per-service concurrency — 6 services x 6 prefetches is 36 concurrent
+ * lark-cli processes, not the 6 the operator asked for.
+ *
+ * Note the rest of the sync spawns lark-cli through spawnSync, which blocks
+ * the event loop, so at most one of those runs at a time. The global ceiling
+ * on concurrent lark-cli processes is therefore this pool plus one.
+ *
+ * Returns a map nodeToken -> children. A node whose listing fails is simply
+ * absent from the map — callers fall back to the synchronous path, so a
  * prefetch failure degrades to the old behaviour instead of failing the sync.
- *
- * Concurrency is supplied by the caller, which passes the operator's existing
- * --parallel budget rather than a constant chosen here — a private fan-out
- * would multiply with the per-service concurrency and exceed whatever rate the
- * operator asked for.
  */
 export async function listWikiChildrenBatch(
   spaceId: string,
   parentNodeTokens: string[],
   larkBin = 'lark-cli',
-  env?: NodeJS.ProcessEnv,
-  concurrency = 6,
+  env: NodeJS.ProcessEnv | undefined,
+  limit: <T>(fn: () => Promise<T>) => Promise<T>,
 ): Promise<Map<string, WikiChild[]>> {
   const out = new Map<string, WikiChild[]>();
-  const queue = [...parentNodeTokens];
-  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
-    for (;;) {
-      const token = queue.shift();
-      if (token === undefined) return;
-      try {
-        out.set(token, await listWikiChildrenAsync(spaceId, token, larkBin, env));
-      } catch {
-        // Leave it out of the map: the caller re-lists this one synchronously.
-      }
-    }
-  });
-  await Promise.all(workers);
+  await Promise.all(
+    parentNodeTokens.map((token) =>
+      limit(async () => {
+        try {
+          out.set(token, await listWikiChildrenAsync(spaceId, token, larkBin, env));
+        } catch {
+          // Leave it out of the map: the caller re-lists this one synchronously.
+        }
+      }),
+    ),
+  );
   return out;
 }
 
