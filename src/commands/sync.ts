@@ -94,14 +94,18 @@ export async function runSync(args: SyncArgs): Promise<number> {
     process.stderr.write(`[sync] --parallel must be >= 1, got ${parallel}\n`);
     return EXIT_CONFIG;
   }
+  // 操作者要的档位。下面 service 那层会按 service 数量夹一次，但**这个不夹** ——
+  // 它是「允许打给 Lark 的并发」，不该因为只有一个 service 就退回串行
+  // （我们自己的 CI 就是单 service，夹了之后提速直接没了）。
+  const rateBudget = parallel;
   parallel = Math.min(parallel, services.length);
   const limit = pLimit(parallel);
   // 一个 run 一个闸门，所有 service 共用：这才是「全局并发预算」。
   // 它和上面的 service 闸门是两个独立实例 —— 同一个实例会死锁
   // （service 占着唯一的槽，又要等它自己的子任务拿槽）。
   // sync 的其余部分走 spawnSync，会阻塞事件循环，同一时刻至多一个，
-  // 所以并发的 lark-cli 进程数上限是 parallel + 1。
-  const larkLimit = pLimit(parallel);
+  // 所以并发的 lark-cli 进程数上限是 rateBudget + 1。
+  const larkLimit = pLimit(rateBudget);
 
   const timeoutMs = args.pushTimeoutMs ?? loaded.config.pushTimeoutMs;
   const results: ServiceResult[] = new Array(services.length);
@@ -154,7 +158,7 @@ export async function runSync(args: SyncArgs): Promise<number> {
               service: svc,
               outDirRel: `.openapi-lark/${svc.name}`,
               parallel,
-              larkLimit: parallel > 1 ? larkLimit : undefined,
+              larkLimit: rateBudget > 1 ? larkLimit : undefined,
               timeoutMs,
               pushBytesLimit: loaded.config.maxPushBytes,
               force: args.force,
