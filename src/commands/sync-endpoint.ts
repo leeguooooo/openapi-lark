@@ -506,12 +506,23 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   // Best-effort: a token missing from the map (prefetch failed, or the tag node
   // is created later in the loop) falls back to the synchronous listing, so
   // this can only make the sync faster, never break it.
+  //
+  // Concurrency comes from --parallel, the same budget tree mode already spends
+  // on children (runTreeSync gets `parallelChildren: parallel`). Deliberately
+  // NOT a private constant: a hard-coded fan-out here would multiply with the
+  // per-service concurrency and quietly exceed whatever rate the operator
+  // picked. At --parallel 1 (the default) we skip the prefetch entirely, so
+  // default behaviour stays exactly as it was — this is opt-in speed, and the
+  // knob to opt in with is the one that already exists.
+  const prefetchConcurrency = Math.max(1, ctx.parallel ?? 1);
   let leafPrefetch = new Map<string, WikiChild[]>();
-  if (!ctx.dryRun && tagChildren.length > 0) {
+  if (!ctx.dryRun && prefetchConcurrency > 1 && tagChildren.length > 0) {
     leafPrefetch = await listWikiChildrenBatch(
       parent.spaceId,
       tagChildren.map((c) => c.nodeToken),
       larkBin,
+      undefined,
+      prefetchConcurrency,
     );
   }
 

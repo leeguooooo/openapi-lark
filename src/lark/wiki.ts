@@ -212,8 +212,10 @@ export function listWikiChildrenAsync(
  * absent from the map — callers fall back to the synchronous path so a
  * prefetch failure degrades to the old behaviour instead of failing the sync.
  *
- * Concurrency is capped because these are Lark API calls; the cap is the same
- * order as the `--parallel` guidance for services (≤ 4-6).
+ * Concurrency is supplied by the caller, which passes the operator's existing
+ * --parallel budget rather than a constant chosen here — a private fan-out
+ * would multiply with the per-service concurrency and exceed whatever rate the
+ * operator asked for.
  */
 export async function listWikiChildrenBatch(
   spaceId: string,
