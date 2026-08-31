@@ -23,6 +23,7 @@ import {
   deleteWikiNode,
   WikiError,
   type WikiChild,
+  listWikiChildrenBatch,
 } from '../lark/wiki.js';
 import {
   buildChildPool,
@@ -67,6 +68,8 @@ export interface EndpointSyncContext {
   service: ServiceConfig;
   outDirRel: string;
   parallel: number;
+  /** 全run 共享的 lark-cli 并发闸门（见 listWikiChildrenBatch） */
+  larkLimit?: <T>(fn: () => Promise<T>) => Promise<T>;
   timeoutMs: number;
   pushBytesLimit: number;
   /** Force re-push even if hash matches. Default false. */
@@ -490,6 +493,40 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
   // doesn't apply to tag nodes (their title is plain language, not METHOD path).
   const tagPool = buildChildPool(tagChildren);
 
+  // Prefetch every existing tag node's children concurrently.
+  //
+  // The loop below lists each tag's leaves one at a time, and each listing
+  // spawns lark-cli and waits on a Lark round-trip — measured ~2s per tag, so
+  // a 12-tag spec spends ~25s in planning with nothing CPU-bound happening.
+  // Doing them together turns that into roughly one round-trip.
+  //
+  // Superset by design: we prefetch for ALL children listed under the parent,
+  // not just the ones the cascade will match. That avoids duplicating the
+  // pop-by-cascade matching here (it mutates tagPool, so we cannot peek), and
+  // the few extra listings are concurrent anyway.
+  //
+  // Best-effort: a token missing from the map (prefetch failed, or the tag node
+  // is created later in the loop) falls back to the synchronous listing, so
+  // this can only make the sync faster, never break it.
+  //
+  // Concurrency is a limiter created ONCE per sync run and shared by every
+  // service (see runSync), so the cap is global. Handing this layer its own
+  // number would multiply with the per-service concurrency and quietly exceed
+  // the rate the operator picked with --parallel.
+  //
+  // No limiter (or --parallel 1) means no prefetch at all: default behaviour
+  // stays byte-for-byte what it was, and the speedup is opt-in through the
+  // knob that already exists.
+  let leafPrefetch = new Map<string, WikiChild[]>();
+  if (!ctx.dryRun && ctx.larkLimit && tagChildren.length > 0) {
+    leafPrefetch = await listWikiChildrenBatch(
+      parent.spaceId,
+      tagChildren.map((c) => c.nodeToken),
+      larkBin,
+      undefined,
+      ctx.larkLimit,
+    );
+  }
   // Guard: warn (don't block) if docToken looks like it points at a shared /
   // space-root node rather than this project's dedicated parent. Skipped for
   // faked dry-run parents (tagChildren is empty there anyway).
@@ -583,8 +620,10 @@ export async function runEndpointSync(ctx: EndpointSyncContext): Promise<Service
     if (tagNode.nodeToken.startsWith('dryrun-')) {
       leafChildren = [];
     } else {
+      const prefetched = leafPrefetch.get(tagNode.nodeToken);
       try {
-        leafChildren = listWikiChildren(parent.spaceId, tagNode.nodeToken, larkBin);
+        leafChildren =
+          prefetched ?? listWikiChildren(parent.spaceId, tagNode.nodeToken, larkBin);
       } catch (err) {
         results.push({
           service: `${svc.name} :: ${tagId}`,

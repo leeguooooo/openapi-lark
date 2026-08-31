@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 
 export interface WikiNodeInfo {
   spaceId: string;
@@ -112,27 +112,33 @@ export function listWikiChildren(
   larkBin = 'lark-cli',
   env?: NodeJS.ProcessEnv,
 ): WikiChild[] {
-  const r = runLark(
-    larkBin,
-    [
-      'wiki',
-      '+node-list',
-      '--space-id',
-      spaceId,
-      '--parent-node-token',
-      parentNodeToken,
-      '--page-all',
-      '--page-size',
-      '50',
-    ],
-    env,
-  );
+  const r = runLark(larkBin, nodeListArgs(spaceId, parentNodeToken), env);
   if (!r.ok) {
     throw new WikiError(`wiki +node-list failed: ${r.stderr || r.stdout}`);
   }
+  return parseNodeList(r.stdout);
+}
+
+/** Arguments for `wiki +node-list`; shared by the sync and async variants. */
+function nodeListArgs(spaceId: string, parentNodeToken: string): string[] {
+  return [
+    'wiki',
+    '+node-list',
+    '--space-id',
+    spaceId,
+    '--parent-node-token',
+    parentNodeToken,
+    '--page-all',
+    '--page-size',
+    '50',
+  ];
+}
+
+/** Parse `wiki +node-list` stdout into WikiChild[]. */
+function parseNodeList(stdout: string): WikiChild[] {
   let parsed: any;
   try {
-    parsed = JSON.parse(r.stdout);
+    parsed = JSON.parse(stdout);
   } catch (err) {
     throw new WikiError(`wiki +node-list returned non-JSON: ${(err as Error).message}`);
   }
@@ -152,6 +158,90 @@ export function listWikiChildren(
     objType: n.obj_type,
     hasChild: !!n.has_child,
   }));
+}
+
+/**
+ * Async twin of listWikiChildren.
+ *
+ * Every lark-cli call spawns the Go binary and waits on a network round-trip,
+ * and spawnSync serialises them. On a spec with N tags the planning phase pays
+ * N × (process start + round-trip) back to back — measured at ~2s per tag, so
+ * ~25s for 12 tags with zero of it CPU-bound. This variant lets the caller run
+ * those listings concurrently; see listWikiChildrenBatch.
+ */
+export function listWikiChildrenAsync(
+  spaceId: string,
+  parentNodeToken: string,
+  larkBin = 'lark-cli',
+  env?: NodeJS.ProcessEnv,
+  timeoutMs = 30_000,
+): Promise<WikiChild[]> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(
+      larkBin,
+      nodeListArgs(spaceId, parentNodeToken),
+      {
+        encoding: 'utf8',
+        env: env ?? process.env,
+        timeout: timeoutMs,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            reject(new WikiError(`lark-cli binary "${larkBin}" not found in PATH`));
+            return;
+          }
+          reject(new WikiError(`wiki +node-list failed: ${stderr || stdout}`));
+          return;
+        }
+        try {
+          resolvePromise(parseNodeList(stdout));
+        } catch (parseErr) {
+          reject(parseErr);
+        }
+      },
+    );
+  });
+}
+
+/**
+ * List children of many wiki nodes, sharing ONE concurrency budget.
+ *
+ * The limiter is supplied by the caller and is created once per sync run, so
+ * every service draws from the same pool: the cap is global, not per-service.
+ * An earlier version took a plain number, which multiplied with the
+ * per-service concurrency — 6 services x 6 prefetches is 36 concurrent
+ * lark-cli processes, not the 6 the operator asked for.
+ *
+ * Note the rest of the sync spawns lark-cli through spawnSync, which blocks
+ * the event loop, so at most one of those runs at a time. The global ceiling
+ * on concurrent lark-cli processes is therefore this pool plus one.
+ *
+ * Returns a map nodeToken -> children. A node whose listing fails is simply
+ * absent from the map — callers fall back to the synchronous path, so a
+ * prefetch failure degrades to the old behaviour instead of failing the sync.
+ */
+export async function listWikiChildrenBatch(
+  spaceId: string,
+  parentNodeTokens: string[],
+  larkBin = 'lark-cli',
+  env: NodeJS.ProcessEnv | undefined,
+  limit: <T>(fn: () => Promise<T>) => Promise<T>,
+): Promise<Map<string, WikiChild[]>> {
+  const out = new Map<string, WikiChild[]>();
+  await Promise.all(
+    parentNodeTokens.map((token) =>
+      limit(async () => {
+        try {
+          out.set(token, await listWikiChildrenAsync(spaceId, token, larkBin, env));
+        } catch {
+          // Leave it out of the map: the caller re-lists this one synchronously.
+        }
+      }),
+    ),
+  );
+  return out;
 }
 
 /**
