@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 
 export interface WikiNodeInfo {
   spaceId: string;
@@ -112,27 +112,33 @@ export function listWikiChildren(
   larkBin = 'lark-cli',
   env?: NodeJS.ProcessEnv,
 ): WikiChild[] {
-  const r = runLark(
-    larkBin,
-    [
-      'wiki',
-      '+node-list',
-      '--space-id',
-      spaceId,
-      '--parent-node-token',
-      parentNodeToken,
-      '--page-all',
-      '--page-size',
-      '50',
-    ],
-    env,
-  );
+  const r = runLark(larkBin, nodeListArgs(spaceId, parentNodeToken), env);
   if (!r.ok) {
     throw new WikiError(`wiki +node-list failed: ${r.stderr || r.stdout}`);
   }
+  return parseNodeList(r.stdout);
+}
+
+/** Arguments for `wiki +node-list`; shared by the sync and async variants. */
+function nodeListArgs(spaceId: string, parentNodeToken: string): string[] {
+  return [
+    'wiki',
+    '+node-list',
+    '--space-id',
+    spaceId,
+    '--parent-node-token',
+    parentNodeToken,
+    '--page-all',
+    '--page-size',
+    '50',
+  ];
+}
+
+/** Parse `wiki +node-list` stdout into WikiChild[]. */
+function parseNodeList(stdout: string): WikiChild[] {
   let parsed: any;
   try {
-    parsed = JSON.parse(r.stdout);
+    parsed = JSON.parse(stdout);
   } catch (err) {
     throw new WikiError(`wiki +node-list returned non-JSON: ${(err as Error).message}`);
   }
@@ -152,6 +158,85 @@ export function listWikiChildren(
     objType: n.obj_type,
     hasChild: !!n.has_child,
   }));
+}
+
+/**
+ * Async twin of listWikiChildren.
+ *
+ * Every lark-cli call spawns the Go binary and waits on a network round-trip,
+ * and spawnSync serialises them. On a spec with N tags the planning phase pays
+ * N × (process start + round-trip) back to back — measured at ~2s per tag, so
+ * ~25s for 12 tags with zero of it CPU-bound. This variant lets the caller run
+ * those listings concurrently; see listWikiChildrenBatch.
+ */
+export function listWikiChildrenAsync(
+  spaceId: string,
+  parentNodeToken: string,
+  larkBin = 'lark-cli',
+  env?: NodeJS.ProcessEnv,
+  timeoutMs = 30_000,
+): Promise<WikiChild[]> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(
+      larkBin,
+      nodeListArgs(spaceId, parentNodeToken),
+      {
+        encoding: 'utf8',
+        env: env ?? process.env,
+        timeout: timeoutMs,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            reject(new WikiError(`lark-cli binary "${larkBin}" not found in PATH`));
+            return;
+          }
+          reject(new WikiError(`wiki +node-list failed: ${stderr || stdout}`));
+          return;
+        }
+        try {
+          resolvePromise(parseNodeList(stdout));
+        } catch (parseErr) {
+          reject(parseErr);
+        }
+      },
+    );
+  });
+}
+
+/**
+ * List children of many wiki nodes concurrently.
+ *
+ * Returns a map nodeToken → children. A node whose listing fails is simply
+ * absent from the map — callers fall back to the synchronous path so a
+ * prefetch failure degrades to the old behaviour instead of failing the sync.
+ *
+ * Concurrency is capped because these are Lark API calls; the cap is the same
+ * order as the `--parallel` guidance for services (≤ 4-6).
+ */
+export async function listWikiChildrenBatch(
+  spaceId: string,
+  parentNodeTokens: string[],
+  larkBin = 'lark-cli',
+  env?: NodeJS.ProcessEnv,
+  concurrency = 6,
+): Promise<Map<string, WikiChild[]>> {
+  const out = new Map<string, WikiChild[]>();
+  const queue = [...parentNodeTokens];
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    for (;;) {
+      const token = queue.shift();
+      if (token === undefined) return;
+      try {
+        out.set(token, await listWikiChildrenAsync(spaceId, token, larkBin, env));
+      } catch {
+        // Leave it out of the map: the caller re-lists this one synchronously.
+      }
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 /**
